@@ -17,8 +17,19 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 from scipy import stats
-import torch
-import joblib
+# Optional imports for neural model (may not be available on Streamlit Cloud)
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+try:
+    import joblib
+    JOBLIB_AVAILABLE = True
+except ImportError:
+    JOBLIB_AVAILABLE = False
+
 warnings.filterwarnings('ignore')
 
 # =============================================================================
