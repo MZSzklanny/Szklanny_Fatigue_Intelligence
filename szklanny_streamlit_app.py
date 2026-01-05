@@ -4475,23 +4475,11 @@ def predictive_model_page():
             opponent_options = [t for t in available_teams if t != your_team]
             opponent_team = st.selectbox("Select Opponent", options=opponent_options, key="opponent_team")
 
-        # Get current roster (2025-26 season players from dataset column)
-        # Dataset format is "TEAM YYYY-YY" e.g., "PHI 2025-26"
+        # Get current roster - ONLY 2025-26 season players
         if 'dataset' in df.columns:
-            # Filter to 2025-26 season first, fall back to 2024-25 if no 2025-26 data
             current_25_26 = df[df['dataset'].str.contains('2025-26', na=False)]
-            current_24_25 = df[df['dataset'].str.contains('2024-25', na=False)]
-
-            # Use 2025-26 if available, otherwise 2024-25
-            if len(current_25_26[current_25_26['team'] == your_team]) > 0:
-                your_roster = current_25_26[current_25_26['team'] == your_team]['player'].unique()
-            else:
-                your_roster = current_24_25[current_24_25['team'] == your_team]['player'].unique()
-
-            if len(current_25_26[current_25_26['team'] == opponent_team]) > 0:
-                opp_roster = current_25_26[current_25_26['team'] == opponent_team]['player'].unique()
-            else:
-                opp_roster = current_24_25[current_24_25['team'] == opponent_team]['player'].unique()
+            your_roster = current_25_26[current_25_26['team'] == your_team]['player'].unique()
+            opp_roster = current_25_26[current_25_26['team'] == opponent_team]['player'].unique()
         else:
             # Fallback: just use team filter on all data
             your_roster = df[df['team'] == your_team]['player'].unique()
