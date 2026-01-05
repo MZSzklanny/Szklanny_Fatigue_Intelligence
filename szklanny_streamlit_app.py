@@ -3413,8 +3413,13 @@ def load_neural_model():
     try:
         from sdis_neural_models import PlayerPerformanceModel
 
-        model_path = r"C:\Users\user\player_performance_model.pth"
-        scalers_path = r"C:\Users\user\player_model_scalers.pkl"
+        # Check current directory first (Streamlit Cloud), then local path
+        if os.path.exists("player_performance_model.pth"):
+            model_path = "player_performance_model.pth"
+            scalers_path = "player_model_scalers.pkl"
+        else:
+            model_path = os.path.join(DATA_DIR, "player_performance_model.pth")
+            scalers_path = os.path.join(DATA_DIR, "player_model_scalers.pkl")
 
         if not os.path.exists(model_path) or not os.path.exists(scalers_path):
             return None, None, None
