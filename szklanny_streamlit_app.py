@@ -3547,10 +3547,13 @@ def predictive_model_page():
 
     st.sidebar.success("✓ SNM Model Loaded")
 
-    # Load data
-    data_dir = r"C:\Users\user"
-    parquet_path = os.path.join(data_dir, "NBA_Quarter_ALL_Combined.parquet")
-    excel_path = os.path.join(data_dir, "NBA_Quarter_ALL_Combined.xlsx")
+    # Load data - check current directory first (Streamlit Cloud), then local path
+    if os.path.exists("NBA_Quarter_ALL_Combined.parquet"):
+        parquet_path = "NBA_Quarter_ALL_Combined.parquet"
+        excel_path = "NBA_Quarter_ALL_Combined.xlsx"
+    else:
+        parquet_path = os.path.join(DATA_DIR, "NBA_Quarter_ALL_Combined.parquet")
+        excel_path = os.path.join(DATA_DIR, "NBA_Quarter_ALL_Combined.xlsx")
 
     if os.path.exists(parquet_path):
         df = pd.read_parquet(parquet_path)
