@@ -2558,25 +2558,36 @@ def sprs_page():
             from sklearn.preprocessing import StandardScaler
             from sklearn.metrics import r2_score
 
-            # Feature set with workload history
-            # WEIGHTS: Emphasize workload factors, reduce age/trend influence
-            games['minutes_norm'] = (games['game_minutes'] / 48.0) * 1.5  # Amplified
-            games['age_factor'] = (games['age'] - 25) / 10.0 * 0.4  # Reduced weight
-            games['is_b2b_num'] = games['is_b2b'].astype(float) * 1.2  # Slight boost
-            games['workload_5g'] = (games['rolling_minutes_5g'] / 40.0) * 1.5  # Amplified
-            games['fatigue_trend'] = (games['rolling_fg_change_5g'] / 10.0) * 0.6  # Reduced to 60%
-            games['rest_factor'] = (3 - games['days_rest']) / 3.0 * 1.3  # Amplified
-            games['cumulative_load'] = (games['consec_high_min'] / 3.0) * 1.5  # Amplified
+            # Feature set with workload history and age interactions
+            games['minutes_norm'] = games['game_minutes'] / 48.0
+            games['workload_5g'] = games['rolling_minutes_5g'] / 40.0
+            games['is_b2b_num'] = games['is_b2b'].astype(float)
+            games['rest_factor'] = (3 - games['days_rest']) / 3.0
+            games['cumulative_load'] = games['consec_high_min'] / 3.0
 
-            # NOTE: Removed 'fatigue_trend' - it was using past Q4 drops to predict
-            # future Q4 drops (circular). Model should use workload factors only.
+            # AGE INTERACTION FEATURES - amplifies fatigue risk for older players under load
+            # age_penalty = max(0, age - 25) * (minutes_avg_last5 / 30)
+            games['age_penalty'] = games.apply(
+                lambda x: max(0, x['age'] - 25) * (x['rolling_minutes_5g'] / 30.0), axis=1
+            )
+            # Age × B2B interaction - older players hurt more by B2B
+            games['age_b2b_interact'] = games.apply(
+                lambda x: max(0, x['age'] - 28) * x['is_b2b'].astype(float), axis=1
+            )
+            # Age × rest interaction - older players need more recovery
+            games['age_rest_interact'] = games.apply(
+                lambda x: max(0, x['age'] - 28) * max(0, 2 - x['days_rest']), axis=1
+            )
+
             feature_cols = [
-                'minutes_norm',      # This game's minutes
-                'workload_5g',       # Recent workload (5-game avg)
-                'age_factor',        # Age
-                'is_b2b_num',        # Back-to-back
-                'rest_factor',       # Days rest
-                'cumulative_load',   # Consecutive high-minute games
+                'minutes_norm',       # This game's minutes
+                'workload_5g',        # Recent workload (5-game avg)
+                'is_b2b_num',         # Back-to-back
+                'rest_factor',        # Days rest
+                'cumulative_load',    # Consecutive high-minute games
+                'age_penalty',        # Age × workload interaction
+                'age_b2b_interact',   # Age × B2B interaction
+                'age_rest_interact',  # Age × rest interaction
             ]
 
             # Clean data
@@ -2597,10 +2608,17 @@ def sprs_page():
                 X_train_scaled = scaler.fit_transform(X_train)
                 X_test_scaled = scaler.transform(X_test)
 
-                # Gradient Boosting captures non-linear fatigue patterns
+                # Gradient Boosting with tuned hyperparameters
+                # max_features='sqrt' reduces overfitting, allows weaker features to contribute
+                # min_samples_leaf=10 prevents splitting on noise
                 model = GradientBoostingRegressor(
-                    n_estimators=100, max_depth=3, learning_rate=0.1,
-                    min_samples_leaf=5, subsample=0.8, random_state=42
+                    n_estimators=150,
+                    max_depth=4,
+                    learning_rate=0.08,
+                    min_samples_leaf=10,    # Prevent overfitting
+                    max_features='sqrt',     # Feature selection per split
+                    subsample=0.8,
+                    random_state=42
                 )
                 model.fit(X_train_scaled, y_train)
 
@@ -2613,9 +2631,10 @@ def sprs_page():
                 raw_pred = model.predict(X_all_scaled)
                 model_df['fatigue_risk'] = (pd.Series(raw_pred).rank(pct=True) * 100).values
 
-                # Learned feature importance (workload factors only)
+                # Learned feature importance (with age interactions)
                 learned_weights = dict(zip(
-                    ['Minutes', 'Workload (5g)', 'Age', 'B2B', 'Rest', 'Consec. Load'],
+                    ['Minutes', 'Workload (5g)', 'B2B', 'Rest', 'Consec. Load',
+                     'Age×Load', 'Age×B2B', 'Age×Rest'],
                     model.feature_importances_ * 100
                 ))
 
@@ -2625,17 +2644,21 @@ def sprs_page():
                                                 labels=['Low', 'Moderate', 'High', 'Very High'])
                 model_df['q4_drop'] = (model_df['fg_change'] < -5).astype(int)
 
-                # Metrics
+                # Metrics with Adjusted R² (penalizes unnecessary features)
                 train_r2 = r2_score(y_train, y_train_pred)
                 test_r2 = r2_score(y_test, y_test_pred)
+                n_test = len(y_test)
+                p = X_test.shape[1]  # number of predictors
+                # Adjusted R² = 1 - (1 - R²) * (n - 1) / (n - p - 1)
+                adjusted_r2 = 1 - (1 - test_r2) * (n_test - 1) / (n_test - p - 1)
                 correlation = model_df['fatigue_risk'].corr(-model_df['fg_change'])
                 accuracy = ((model_df['fatigue_risk'] > 50) == (model_df['q4_drop'] == 1)).mean()
 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Train R²", f"{train_r2:.2f}",
                            help="Model fit on training data")
-                col2.metric("Test R²", f"{test_r2:.2f}",
-                           help="Model performance on held-out data")
+                col2.metric("Adj. Test R²", f"{adjusted_r2:.2f}",
+                           help="Adjusted R² (penalizes extra features)")
                 col3.metric("Correlation", f"{correlation:.2f}",
                            help="Correlation with actual FG% drop")
                 col4.metric("Sample Size", f"{len(model_df)} games",
