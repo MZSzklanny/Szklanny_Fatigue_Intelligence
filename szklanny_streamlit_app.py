@@ -2450,9 +2450,9 @@ def sprs_page():
     if selected_tab == "Predictive Model":
         st.subheader("Workload Risk Assessment")
         st.markdown("""
-        **Note:** Q4 FG% drops are highly variable and not well-predicted by workload factors alone
-        (dominated by opponent defense, game context, shot selection). This tool shows **physiological risk factors**
-        based on sports science principles rather than ML predictions.
+        **Avg Risk Score (0-100):** Composite workload score combining back-to-back games, rest days,
+        recent minutes load, age factors, and consecutive heavy games. Higher scores indicate greater
+        physiological stress that may impact Q4 performance.
         """)
 
         from sklearn.ensemble import RandomForestClassifier
