@@ -3502,10 +3502,10 @@ def sprs_page():
                         if pred_b2b:
                             factors_negative.append(f"**Back-to-back game** - fatigue risk elevated")
 
-                        if pred_recovery < -0.3:
-                            factors_negative.append(f"**Recovery penalty** ({pred_recovery:.2f}) - insufficient rest")
-                        elif pred_recovery > 0:
-                            factors_positive.append(f"**Well rested** - good recovery time")
+                        if recovery_penalty > 0.3:
+                            factors_negative.append(f"**Recovery penalty** ({recovery_penalty:.2f}) - insufficient rest")
+                        elif pred_rest >= 2:
+                            factors_positive.append(f"**Well rested** ({pred_rest} days) - good recovery time")
 
                         if pred_age >= 32:
                             factors_negative.append(f"**Age factor** ({pred_age}) - higher fatigue sensitivity")
@@ -3517,10 +3517,12 @@ def sprs_page():
                         elif pred_minutes < 28:
                             factors_positive.append(f"**Managed minutes** ({pred_minutes:.1f} avg) - fresh legs")
 
-                        if pred_std > 0.8:
-                            factors_negative.append(f"**Inconsistent** (volatility {pred_std:.2f}) - unpredictable output")
-                        elif pred_std < 0.4:
-                            factors_positive.append(f"**Consistent performer** (volatility {pred_std:.2f})")
+                        # Get volatility from feature map
+                        player_std = feature_value_map.get('slfi_std_last10', 0.5)
+                        if player_std > 0.8:
+                            factors_negative.append(f"**Inconsistent** (volatility {player_std:.2f}) - unpredictable output")
+                        elif player_std < 0.4:
+                            factors_positive.append(f"**Consistent performer** (volatility {player_std:.2f})")
 
                         # Display factors
                         col_pos, col_neg = st.columns(2)
