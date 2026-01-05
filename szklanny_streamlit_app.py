@@ -2663,20 +2663,42 @@ def sprs_page():
                 col4.metric("Sample Size", f"{len(model_df)} games",
                            help="Games analyzed")
 
-                st.markdown("### 📊 Risk Factor Weights")
-                st.markdown("""
-                <div class='info-box'>
-                <strong>Based on Sports Science Research:</strong><br>
-                • Back-to-back games have the highest fatigue impact<br>
-                • Rest < 2 days significantly increases injury/fatigue risk<br>
-                • Cumulative workload (5-game minutes) compounds fatigue<br>
-                • Age amplifies fatigue effects under high load<br>
-                <em>Note: These are research-based weights, not ML predictions</em>
-                </div>
-                """, unsafe_allow_html=True)
+                # ================================================================
+                # PLAYER RISK SELECTOR
+                # ================================================================
+                st.markdown("### 👤 Player Risk Profile")
+                available_players = sorted(games['player'].unique())
+                selected_player = st.selectbox("Select Player", available_players, key="risk_player_select")
 
-                # Show fixed weights (honest about what they are)
-                st.markdown("### Risk Factor Breakdown")
+                if selected_player:
+                    player_games = games[games['player'] == selected_player]
+                    if len(player_games) > 0:
+                        latest_game = player_games.iloc[-1]
+                        avg_risk = player_games['fatigue_risk'].mean()
+                        max_risk = player_games['fatigue_risk'].max()
+                        high_risk_games = (player_games['fatigue_risk'] > 50).sum()
+
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("Current Risk", f"{latest_game['fatigue_risk']:.0f}",
+                                   help="Most recent game risk score")
+                        col2.metric("Avg Risk", f"{avg_risk:.1f}",
+                                   help="Average risk across all games")
+                        col3.metric("Peak Risk", f"{max_risk:.0f}",
+                                   help="Highest risk game")
+                        col4.metric("High Risk Games", f"{high_risk_games}/{len(player_games)}",
+                                   help="Games with risk > 50")
+
+                        # Show risk breakdown for latest game
+                        st.markdown("**Latest Game Risk Breakdown:**")
+                        breakdown_cols = st.columns(5)
+                        breakdown_cols[0].metric("B2B", f"{latest_game.get('risk_b2b', 0):.0f}/30")
+                        breakdown_cols[1].metric("Rest", f"{latest_game.get('risk_rest', 0):.0f}/25")
+                        breakdown_cols[2].metric("Workload", f"{latest_game.get('risk_minutes', 0):.0f}/20")
+                        breakdown_cols[3].metric("Age×Load", f"{latest_game.get('risk_age', 0):.0f}/15")
+                        breakdown_cols[4].metric("Consec.", f"{latest_game.get('risk_consec', 0):.0f}/10")
+
+                st.markdown("---")
+                st.markdown("### 📊 Risk Factor Weights")
                 importance_df = pd.DataFrame({
                     'Factor': ['Back-to-Back', 'Low Rest (<2 days)', 'High Workload (5g)', 'Age × Load', 'Consec. Heavy Games'],
                     'Weight': [30, 25, 20, 15, 10]
