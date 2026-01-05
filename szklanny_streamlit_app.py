@@ -3962,7 +3962,7 @@ def predict_player_with_opponent_context(model, scalers, player_history, target_
 # =============================================================================
 
 def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
-                                       n_simulations=1000, team_noise_std=3.0):
+                                       n_simulations=1000, team_noise_std=5.0):
     """
     Run Monte Carlo simulation to estimate win probability and point differential distribution.
 
@@ -3983,13 +3983,37 @@ def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
     """
     np.random.seed(42)  # For reproducibility
 
-    # Get mean predictions for each player
+    # Get predictions and minutes
     your_pts_means = your_predictions_df['Proj PTS'].values if len(your_predictions_df) > 0 else np.array([0])
     opp_pts_means = opp_predictions_df['Proj PTS'].values if len(opp_predictions_df) > 0 else np.array([0])
 
+    # Get projected minutes for weighting (if available)
+    if 'Proj MIN' in your_predictions_df.columns:
+        your_mins = your_predictions_df['Proj MIN'].values
+    else:
+        your_mins = np.full(len(your_pts_means), 240.0 / max(len(your_pts_means), 1))
+
+    if 'Proj MIN' in opp_predictions_df.columns:
+        opp_mins = opp_predictions_df['Proj MIN'].values
+    else:
+        opp_mins = np.full(len(opp_pts_means), 240.0 / max(len(opp_pts_means), 1))
+
+    # Calculate minutes share weights (each player's share of 240 total minutes)
+    your_total_mins = your_mins.sum()
+    opp_total_mins = opp_mins.sum()
+
+    # Weight factor: if total projected mins > 240, we're double counting
+    # Scale down proportionally
+    your_weight = min(240.0 / your_total_mins, 1.0) if your_total_mins > 0 else 1.0
+    opp_weight = min(240.0 / opp_total_mins, 1.0) if opp_total_mins > 0 else 1.0
+
+    # Apply weights to point projections
+    your_pts_weighted = your_pts_means * your_weight
+    opp_pts_weighted = opp_pts_means * opp_weight
+
     # Estimate player-level standard deviations (proportional to mean, ~25% CV)
-    your_pts_stds = your_pts_means * 0.25
-    opp_pts_stds = opp_pts_means * 0.25
+    your_pts_stds = your_pts_weighted * 0.25
+    opp_pts_stds = opp_pts_weighted * 0.25
 
     # Run simulations
     point_diffs = []
@@ -3998,12 +4022,16 @@ def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
 
     for _ in range(n_simulations):
         # Sample each player's points from normal distribution
-        your_sampled = np.maximum(0, np.random.normal(your_pts_means, your_pts_stds))
-        opp_sampled = np.maximum(0, np.random.normal(opp_pts_means, opp_pts_stds))
+        your_sampled = np.maximum(0, np.random.normal(your_pts_weighted, your_pts_stds))
+        opp_sampled = np.maximum(0, np.random.normal(opp_pts_weighted, opp_pts_stds))
 
         # Sum to team totals
         your_total = your_sampled.sum()
         opp_total = opp_sampled.sum()
+
+        # Sanity check: cap team totals to realistic NBA range (85-140 points)
+        your_total = max(85, min(140, your_total))
+        opp_total = max(85, min(140, opp_total))
 
         # Add team-level noise (game variance, luck)
         your_total += np.random.normal(0, team_noise_std)
