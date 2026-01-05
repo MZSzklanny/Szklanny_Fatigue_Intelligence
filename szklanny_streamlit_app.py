@@ -422,6 +422,19 @@ def load_combined_quarter_data(file_path="NBA_Quarter_ALL_Combined.xlsx"):
 
     df.columns = df.columns.str.lower().str.strip()
 
+    # Filter to NBA teams only (exclude international/preseason opponents)
+    NBA_TEAMS = {
+        'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+        'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+        'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
+    }
+    if 'team' in df.columns:
+        before_count = len(df)
+        df = df[df['team'].isin(NBA_TEAMS)]
+        filtered_count = before_count - len(df)
+        if filtered_count > 0:
+            pass  # Silently filter preseason/international games
+
     # Normalize player names (combine variants)
     PLAYER_NAME_MAP = {
         'Valdez Edgecombe': 'VJ Edgecombe',
@@ -1185,6 +1198,20 @@ def build_fatigue_regression_predictor(metrics_data, predict_rolling=True):
         metrics_data['is_b2b_num'] = metrics_data['is_b2b'].astype(float)
         feature_cols.append('is_b2b_num')
 
+    # Add neural network projection features if available (hybrid model)
+    neural_feature_cols = [
+        'neural_proj_pts',
+        'neural_proj_fga',
+        'neural_proj_ts',
+        'neural_proj_tov_rate',
+        'neural_proj_game_score',
+        'neural_expected_efficiency',
+        'neural_volume_efficiency'
+    ]
+    available_neural = [col for col in neural_feature_cols if col in metrics_data.columns]
+    if available_neural:
+        feature_cols.extend(available_neural)
+
     # Filter to valid data
     model_data = metrics_data.dropna(subset=feature_cols + ['target_spm'])
     model_data = model_data.copy()
@@ -1244,27 +1271,34 @@ def build_fatigue_regression_predictor(metrics_data, predict_rolling=True):
     }
 
     # Feature importance (from GB, not coefficients)
-    feature_names = [
-        'Avg SPM (5g)',         # Primary trend
-        'Avg SPM (3g)',         # Recent trend
-        'Avg SPM (10g)',        # Long-term baseline
-        'SPM Momentum',         # Trend direction
-        'SPM Trend (3g-10g)',   # Short vs long
-        'Avg Minutes (5g)',
-        'Age',
-        'Age-Adjusted Load',
-        'Age × B2B',
-        'Recovery Penalty',
-        'Effort Index (5g)'
-    ]
-    # Add extra feature names if we added them
-    if 'slfi_std_last10' in feature_cols:
-        feature_names.append('SPM Volatility (10g)')
-    if 'is_b2b_num' in feature_cols:
-        feature_names.append('Is B2B')
+    # Map column names to display names
+    col_to_name = {
+        'slfi_avg_last5': 'Avg SPM (5g)',
+        'slfi_avg_last3': 'Avg SPM (3g)',
+        'slfi_avg_last10': 'Avg SPM (10g)',
+        'slfi_momentum': 'SPM Momentum',
+        'slfi_trend': 'SPM Trend (3g-10g)',
+        'minutes_avg_last5': 'Avg Minutes (5g)',
+        'age': 'Age',
+        'age_load': 'Age-Adjusted Load',
+        'age_b2b': 'Age × B2B',
+        'recovery_penalty': 'Recovery Penalty',
+        'effort_index_last5': 'Effort Index (5g)',
+        'slfi_std_last10': 'SPM Volatility (10g)',
+        'is_b2b_num': 'Is B2B',
+        'neural_proj_pts': 'Neural Proj Points',
+        'neural_proj_fga': 'Neural Proj FGA',
+        'neural_proj_ts': 'Neural Proj TS%',
+        'neural_proj_tov_rate': 'Neural Proj TOV Rate',
+        'neural_proj_game_score': 'Neural Proj Game Score',
+        'neural_expected_efficiency': 'Neural Expected Eff',
+        'neural_volume_efficiency': 'Neural Volume Eff'
+    }
+    # Build feature names in exact same order as feature_cols
+    feature_names = [col_to_name.get(col, col) for col in feature_cols]
 
     importance = pd.DataFrame({
-        'Feature': feature_names[:len(model.feature_importances_)],
+        'Feature': feature_names,
         'Importance': model.feature_importances_
     }).sort_values('Importance', ascending=False)
 
@@ -2057,15 +2091,15 @@ def sprs_page():
 
     # Analysis View selector (moved up for better UX)
     if 'sprs_tab' not in st.session_state:
-        st.session_state.sprs_tab = "Quarter Analysis"
+        st.session_state.sprs_tab = "Szklanny Metrics (SPM)"
 
     tab_options = [
+        "Szklanny Metrics (SPM)",
         "Quarter Analysis",
         "B2B Impact",
         "Player Breakdown",
         "Fatigue Proxies",
-        "Predictive Model",
-        "Szklanny Metrics (SPM)"
+        "Predictive Model"
     ]
 
     st.sidebar.markdown("### 📊 Analysis View")
@@ -2622,11 +2656,10 @@ def sprs_page():
                 # ================================================================
                 # Weights based on sports science research on fatigue factors
                 RISK_WEIGHTS = {
-                    'b2b': 30,           # Back-to-back: high impact
-                    'low_rest': 25,      # <2 days rest: high impact
+                    'b2b': 35,           # Back-to-back: high impact
+                    'low_rest': 30,      # <2 days rest: high impact
                     'high_minutes': 20,  # High recent workload
                     'age_load': 15,      # Age under high load
-                    'consec_load': 10,   # Consecutive heavy games
                 }
 
                 # Compute rule-based risk score (0-100)
@@ -2634,11 +2667,10 @@ def sprs_page():
                 model_df['risk_rest'] = model_df['rest_factor'].clip(0, 1) * RISK_WEIGHTS['low_rest']
                 model_df['risk_minutes'] = model_df['workload_5g'].clip(0, 1) * RISK_WEIGHTS['high_minutes']
                 model_df['risk_age'] = (model_df['age_penalty'] / 5).clip(0, 1) * RISK_WEIGHTS['age_load']
-                model_df['risk_consec'] = model_df['cumulative_load'].clip(0, 1) * RISK_WEIGHTS['consec_load']
 
                 model_df['fatigue_risk'] = (
                     model_df['risk_b2b'] + model_df['risk_rest'] + model_df['risk_minutes'] +
-                    model_df['risk_age'] + model_df['risk_consec']
+                    model_df['risk_age']
                 ).clip(0, 100)
 
                 # Risk categories
@@ -2690,23 +2722,21 @@ def sprs_page():
 
                         # Show risk breakdown for latest game
                         st.markdown("**Latest Game Risk Breakdown:**")
-                        breakdown_cols = st.columns(5)
-                        breakdown_cols[0].metric("B2B", f"{latest_game.get('risk_b2b', 0):.0f}/30",
+                        breakdown_cols = st.columns(4)
+                        breakdown_cols[0].metric("B2B", f"{latest_game.get('risk_b2b', 0):.0f}/35",
                                                 help="Back-to-back game penalty")
-                        breakdown_cols[1].metric("Rest", f"{latest_game.get('risk_rest', 0):.0f}/25",
+                        breakdown_cols[1].metric("Rest", f"{latest_game.get('risk_rest', 0):.0f}/30",
                                                 help="Less than 2 days rest")
                         breakdown_cols[2].metric("Workload", f"{latest_game.get('risk_minutes', 0):.0f}/20",
                                                 help="5-game average minutes")
                         breakdown_cols[3].metric("Age×Load", f"{latest_game.get('risk_age', 0):.0f}/15",
                                                 help="Age penalty under high workload")
-                        breakdown_cols[4].metric("Heavy Streak", f"{latest_game.get('risk_consec', 0):.0f}/10",
-                                                help="Consecutive games with 35+ minutes")
 
                 st.markdown("---")
                 st.markdown("### 📊 Risk Factor Weights")
                 importance_df = pd.DataFrame({
-                    'Factor': ['Back-to-Back', 'Low Rest (<2 days)', 'High Workload (5g)', 'Age × Load', 'Consec. Heavy Games'],
-                    'Weight': [30, 25, 20, 15, 10]
+                    'Factor': ['Back-to-Back', 'Low Rest (<2 days)', 'High Workload (5g)', 'Age × Load'],
+                    'Weight': [35, 30, 20, 15]
                 }).sort_values('Weight', ascending=True)
 
                 fig = px.bar(importance_df, x='Weight', y='Factor', orientation='h',
@@ -3186,7 +3216,32 @@ def sprs_page():
 
             # Prediction Section
             st.markdown("---")
-            st.markdown("### Fatigue Prediction Models")
+            st.markdown("### Hybrid Fatigue Prediction Models")
+            st.markdown("*Combines neural network insights with traditional fatigue features*")
+
+            # Load neural model and generate projections for hybrid model
+            neural_model, neural_scalers, neural_target_cols = load_neural_model()
+            neural_features_available = False
+
+            if neural_model is not None:
+                with st.spinner("Generating neural projections for hybrid model..."):
+                    neural_projections = get_neural_projections_for_all_players(
+                        filtered_data, neural_model, neural_scalers, neural_target_cols
+                    )
+
+                    if len(neural_projections) > 0:
+                        # Merge neural projections into metrics_data
+                        metrics_data = metrics_data.merge(
+                            neural_projections,
+                            on=['player', 'game_date'],
+                            how='left'
+                        )
+                        neural_features_available = True
+                        st.success(f"✓ Neural features added: {len(neural_projections)} projections merged")
+                    else:
+                        st.warning("⚠️ Neural projections unavailable - using traditional features only")
+            else:
+                st.info("ℹ️ Neural model not loaded - using traditional features only")
 
             # Model type selector
             model_type = st.radio(
@@ -3197,11 +3252,19 @@ def sprs_page():
             )
 
             if model_type == "Regression (predict SPM value)":
-                st.markdown("""
-                **Regression Model:** Predicts the actual SPM value for next game.
-                - More granular: distinguishes -1.5 (severe) from -0.3 (mild)
-                - Includes Effort Index as predictor
-                """)
+                if neural_features_available:
+                    st.markdown("""
+                    **🧠 Hybrid Neural + Tree Model:** Combines LSTM projections with GradientBoosting.
+                    - Neural features capture hot/cold streaks, role changes, sequential patterns
+                    - Tree model captures fatigue factors: workload, rest, age interactions
+                    - More powerful than either approach alone
+                    """)
+                else:
+                    st.markdown("""
+                    **Regression Model:** Predicts the actual SPM value for next game.
+                    - More granular: distinguishes -1.5 (severe) from -0.3 (mild)
+                    - Includes Effort Index as predictor
+                    """)
 
                 result = build_fatigue_regression_predictor(metrics_data)
                 if result[0] is not None:
@@ -3234,10 +3297,11 @@ def sprs_page():
 
                     # Prediction interface
                     st.markdown("#### Predict Next Game SPM")
-                    st.caption("*Model prioritizes 5-game averages over single-game data for stability*")
+                    st.markdown(f"**Selected Player: {selected_player}** - Sliders auto-filled with latest data")
 
-                    # Get player's actual recent values as defaults
-                    player_recent = player_data.dropna(subset=['slfi_avg_last5', 'minutes_avg_last5', 'age'])
+                    # Get player's actual recent values as defaults (use updated metrics_data with neural features)
+                    player_data_updated = metrics_data[metrics_data['player'] == selected_player].sort_values('game_date')
+                    player_recent = player_data_updated.dropna(subset=['slfi_avg_last5', 'minutes_avg_last5', 'age'])
                     if len(player_recent) > 0:
                         latest_row = player_recent.iloc[-1]
                         default_avg5 = float(latest_row.get('slfi_avg_last5', avg_spm))
@@ -3247,6 +3311,8 @@ def sprs_page():
                         default_minutes = float(latest_row.get('minutes_avg_last5', 30.0))
                         default_age = int(latest_row.get('age', 27))
                         default_effort = float(latest_row.get('effort_index_last5', 0.0)) if 'effort_index_last5' in latest_row else 0.0
+                        default_rest = int(latest_row.get('days_rest', 1)) if 'days_rest' in latest_row.index else 1
+                        default_b2b = bool(latest_row.get('is_b2b', False)) if 'is_b2b' in latest_row.index else False
                     else:
                         default_avg5 = float(avg_spm) if not np.isnan(avg_spm) else 0.0
                         default_avg3 = default_avg5
@@ -3255,26 +3321,42 @@ def sprs_page():
                         default_minutes = 30.0
                         default_age = 27
                         default_effort = 0.0
+                        default_rest = 1
+                        default_b2b = False
+
+                    # Clamp defaults to slider ranges
+                    default_avg5 = max(-2.0, min(2.0, default_avg5))
+                    default_avg3 = max(-2.5, min(2.5, default_avg3))
+                    default_avg10 = max(-1.5, min(1.5, default_avg10))
+                    default_last = max(-3.0, min(3.0, default_last))
+                    default_minutes = max(10.0, min(45.0, default_minutes))
+                    default_age = max(19, min(42, default_age))
+                    default_effort = max(-2.0, min(2.0, default_effort))
+                    default_rest = max(0, min(5, default_rest))
+
+                    # Use player name in keys so sliders reset when player changes
+                    player_key = selected_player.replace(" ", "_")[:20]
 
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.markdown("**SPM Trends (Primary)**")
-                        pred_avg5 = st.slider("Avg SPM (5g)", -2.0, 2.0, default_avg5, 0.1, key="reg_spm_avg5",
+                        pred_avg5 = st.slider("Avg SPM (5g)", -2.0, 2.0, default_avg5, 0.1, key=f"reg_spm_avg5_{player_key}",
                                               help="5-game rolling average - most important predictor")
-                        pred_avg3 = st.slider("Avg SPM (3g)", -2.5, 2.5, default_avg3, 0.1, key="reg_spm_avg3",
+                        pred_avg3 = st.slider("Avg SPM (3g)", -2.5, 2.5, default_avg3, 0.1, key=f"reg_spm_avg3_{player_key}",
                                               help="Recent 3-game trend")
                     with col2:
-                        pred_avg10 = st.slider("Avg SPM (10g)", -1.5, 1.5, default_avg10, 0.1, key="reg_spm_avg10",
+                        pred_avg10 = st.slider("Avg SPM (10g)", -1.5, 1.5, default_avg10, 0.1, key=f"reg_spm_avg10_{player_key}",
                                                help="Long-term baseline")
-                        pred_last = st.slider("Last Game SPM", -3.0, 3.0, default_last, 0.1, key="reg_spm_last",
+                        pred_last = st.slider("Last Game SPM", -3.0, 3.0, default_last, 0.1, key=f"reg_spm_last_{player_key}",
                                               help="Single game - less weight than averages")
                     with col3:
-                        pred_minutes = st.slider("Avg Minutes (5g)", 10.0, 45.0, default_minutes, 1.0, key="reg_spm_min")
-                        pred_age = st.slider("Player Age", 19, 42, default_age, 1, key="reg_spm_age")
-                        pred_b2b = st.selectbox("Back-to-Back?", [False, True], key="reg_spm_b2b")
+                        pred_minutes = st.slider("Avg Minutes (5g)", 10.0, 45.0, default_minutes, 1.0, key=f"reg_spm_min_{player_key}")
+                        pred_age = st.slider("Player Age", 19, 42, default_age, 1, key=f"reg_spm_age_{player_key}")
+                        b2b_index = 1 if default_b2b else 0
+                        pred_b2b = st.selectbox("Back-to-Back?", [False, True], index=b2b_index, key=f"reg_spm_b2b_{player_key}")
                     with col4:
-                        pred_rest = st.slider("Days Rest", 0, 5, 1, key="reg_spm_rest")
-                        pred_effort = st.slider("Effort Index (5g)", -2.0, 2.0, default_effort, 0.1, key="reg_effort",
+                        pred_rest = st.slider("Days Rest", 0, 5, default_rest, key=f"reg_spm_rest_{player_key}")
+                        pred_effort = st.slider("Effort Index (5g)", -2.0, 2.0, default_effort, 0.1, key=f"reg_effort_{player_key}",
                                                help="Hustle trend (STL+BLK-PF-TOV)")
                         st.markdown("**Benchmarks:**")
                         st.caption(f"Elite: > {LEAGUE_BENCHMARKS['elite_slfi']}")
@@ -3288,32 +3370,45 @@ def sprs_page():
                         age_b2b = float(pred_b2b) * max(0, pred_age - 30)
                         recovery_penalty = max(0, 2 - pred_rest) * max(0, pred_age - 30)
 
-                        # Build feature vector matching training features (12 base features)
-                        # Order: avg5, avg3, avg10, momentum, trend, last, minutes, age, age_load, age_b2b, recovery, effort
-                        pred_features = [
-                            pred_avg5,           # Primary: 5-game average
-                            pred_avg3,           # Recent 3-game trend
-                            pred_avg10,          # Long-term baseline
-                            pred_momentum,       # Trend direction (5g - last)
-                            pred_trend,          # Short vs long (3g - 10g)
-                            pred_last,           # Single game SPM
-                            pred_minutes,        # Workload
-                            pred_age,            # Age
-                            age_load,            # Age-adjusted load
-                            age_b2b,             # Age × B2B
-                            recovery_penalty,    # Rest penalty
-                            pred_effort          # Effort index
-                        ]
+                        # Get player's latest row for neural/optional features
+                        latest_row = player_recent.iloc[-1] if len(player_recent) > 0 else {}
 
-                        # Add optional features if model was trained with them
-                        if 'slfi_std_last10' in reg_feature_cols:
-                            # Use player's recent volatility or default to 0
-                            if len(player_recent) > 0 and 'slfi_std_last10' in player_recent.columns:
-                                pred_features.append(float(player_recent.iloc[-1].get('slfi_std_last10', 0.0)))
-                            else:
-                                pred_features.append(0.0)
-                        if 'is_b2b_num' in reg_feature_cols:
-                            pred_features.append(float(pred_b2b))
+                        # Map feature column names to values
+                        feature_value_map = {
+                            'slfi_avg_last5': pred_avg5,
+                            'slfi_avg_last3': pred_avg3,
+                            'slfi_avg_last10': pred_avg10,
+                            'slfi_momentum': pred_momentum,
+                            'slfi_trend': pred_trend,
+                            'minutes_avg_last5': pred_minutes,
+                            'age': pred_age,
+                            'age_load': age_load,
+                            'age_b2b': age_b2b,
+                            'recovery_penalty': recovery_penalty,
+                            'effort_index_last5': pred_effort,
+                            'slfi_std_last10': float(latest_row.get('slfi_std_last10', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                            'is_b2b_num': float(pred_b2b),
+                            'neural_proj_pts': float(latest_row.get('neural_proj_pts', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                            'neural_proj_fga': float(latest_row.get('neural_proj_fga', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                            'neural_proj_ts': float(latest_row.get('neural_proj_ts', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                            'neural_proj_tov_rate': float(latest_row.get('neural_proj_tov_rate', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                            'neural_proj_game_score': float(latest_row.get('neural_proj_game_score', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                            'neural_expected_efficiency': float(latest_row.get('neural_expected_efficiency', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                            'neural_volume_efficiency': float(latest_row.get('neural_volume_efficiency', 0.0)) if isinstance(latest_row, pd.Series) else 0.0,
+                        }
+
+                        # Build feature vector in EXACT same order as reg_feature_cols
+                        pred_features = []
+                        for col in reg_feature_cols:
+                            val = feature_value_map.get(col, 0.0)
+                            if pd.isna(val):
+                                val = 0.0
+                            pred_features.append(float(val))
+
+                        # Get neural baseline for display
+                        neural_baseline = feature_value_map.get('neural_proj_game_score', None)
+                        if neural_baseline == 0.0:
+                            neural_baseline = None
 
                         X_pred = np.array([pred_features])
                         X_pred_scaled = reg_scaler.transform(X_pred)
@@ -3321,29 +3416,63 @@ def sprs_page():
 
                         st.markdown("---")
 
-                        # Results
-                        col1, col2, col3, col4 = st.columns(4)
-                        col1.metric("Predicted SPM", f"{predicted_spm:+.2f}")
+                        # Results - show Neural Baseline vs Hybrid if neural features used
+                        if neural_baseline is not None and neural_features_available:
+                            st.markdown("#### 🧠 Neural vs Hybrid Comparison")
+                            col1, col2, col3, col4, col5 = st.columns(5)
+                            col1.metric("Neural Baseline", f"{neural_baseline:.1f}",
+                                       help="Raw neural model projection (game score)")
+                            col2.metric("Hybrid SPM", f"{predicted_spm:+.2f}",
+                                       help="Fatigue-adjusted prediction")
 
-                        if predicted_spm < LEAGUE_BENCHMARKS['fatigue_slfi']:
-                            assessment = "FATIGUE LIKELY"
-                            col2.metric("Assessment", assessment, delta="Below threshold", delta_color="inverse")
-                        elif predicted_spm > LEAGUE_BENCHMARKS['elite_slfi']:
-                            assessment = "RESILIENT"
-                            col2.metric("Assessment", assessment, delta="Above elite", delta_color="normal")
+                            fatigue_adj = predicted_spm - (neural_baseline / 10)  # Rough scale conversion
+                            if fatigue_adj < -0.3:
+                                col3.metric("Fatigue Impact", f"{fatigue_adj:+.2f}", delta="High fatigue risk", delta_color="inverse")
+                            elif fatigue_adj > 0.3:
+                                col3.metric("Fatigue Impact", f"{fatigue_adj:+.2f}", delta="Low fatigue risk", delta_color="normal")
+                            else:
+                                col3.metric("Fatigue Impact", f"{fatigue_adj:+.2f}", delta="Moderate", delta_color="off")
+
+                            # CI and PRF
+                            ci_low = predicted_spm - 1.96 * reg_metrics['test_rmse']
+                            ci_high = predicted_spm + 1.96 * reg_metrics['test_rmse']
+                            col4.metric("95% CI", f"[{ci_low:.2f}, {ci_high:.2f}]")
+
+                            prf = compute_physiological_risk_floor(pred_age, pred_minutes, pred_b2b, pred_rest)
+                            col5.metric("Physiology Floor", f"{prf*100:.0f}%",
+                                       help="Minimum fatigue risk based on age/workload")
                         else:
-                            assessment = "MODERATE"
-                            col2.metric("Assessment", assessment, delta="In normal range", delta_color="off")
+                            # Standard display without neural baseline
+                            col1, col2, col3, col4 = st.columns(4)
+                            col1.metric("Predicted SPM", f"{predicted_spm:+.2f}")
 
-                        # CI estimate (rough, based on test RMSE)
-                        ci_low = predicted_spm - 1.96 * reg_metrics['test_rmse']
-                        ci_high = predicted_spm + 1.96 * reg_metrics['test_rmse']
-                        col3.metric("95% CI", f"[{ci_low:.2f}, {ci_high:.2f}]")
+                            if predicted_spm < LEAGUE_BENCHMARKS['fatigue_slfi']:
+                                assessment = "FATIGUE LIKELY"
+                                col2.metric("Assessment", assessment, delta="Below threshold", delta_color="inverse")
+                            elif predicted_spm > LEAGUE_BENCHMARKS['elite_slfi']:
+                                assessment = "RESILIENT"
+                                col2.metric("Assessment", assessment, delta="Above elite", delta_color="normal")
+                            else:
+                                assessment = "MODERATE"
+                                col2.metric("Assessment", assessment, delta="In normal range", delta_color="off")
 
-                        # PRF comparison
-                        prf = compute_physiological_risk_floor(pred_age, pred_minutes, pred_b2b, pred_rest)
-                        col4.metric("Physiology Floor", f"{prf*100:.0f}%",
-                                   help="Minimum fatigue risk based on age/workload")
+                            # CI estimate (rough, based on test RMSE)
+                            ci_low = predicted_spm - 1.96 * reg_metrics['test_rmse']
+                            ci_high = predicted_spm + 1.96 * reg_metrics['test_rmse']
+                            col3.metric("95% CI", f"[{ci_low:.2f}, {ci_high:.2f}]")
+
+                            # PRF comparison
+                            prf = compute_physiological_risk_floor(pred_age, pred_minutes, pred_b2b, pred_rest)
+                            col4.metric("Physiology Floor", f"{prf*100:.0f}%",
+                                       help="Minimum fatigue risk based on age/workload")
+
+                        # Assessment based on predicted SPM
+                        if predicted_spm < LEAGUE_BENCHMARKS['fatigue_slfi']:
+                            st.error(f"⚠️ **FATIGUE LIKELY** - SPM {predicted_spm:+.2f} below threshold ({LEAGUE_BENCHMARKS['fatigue_slfi']})")
+                        elif predicted_spm > LEAGUE_BENCHMARKS['elite_slfi']:
+                            st.success(f"✓ **RESILIENT** - SPM {predicted_spm:+.2f} above elite threshold ({LEAGUE_BENCHMARKS['elite_slfi']})")
+                        else:
+                            st.info(f"ℹ️ **MODERATE** - SPM {predicted_spm:+.2f} in normal range")
 
                         # SHAP explanation
                         st.markdown("#### Explain This Prediction (SHAP)")
@@ -3355,15 +3484,30 @@ def sprs_page():
                             explainer = shap.TreeExplainer(reg_model)
                             shap_values = explainer.shap_values(X_pred_scaled)
 
-                            # Build feature names matching model features (12 base)
-                            feature_names = ['Avg SPM (5g)', 'Avg SPM (3g)', 'Avg SPM (10g)',
-                                           'SPM Momentum', 'SPM Trend', 'Last SPM',
-                                           'Avg Minutes', 'Age', 'Age-Load', 'Age×B2B',
-                                           'Recovery Pen.', 'Effort Idx']
-                            if 'slfi_std_last10' in reg_feature_cols:
-                                feature_names.append('SPM Volatility')
-                            if 'is_b2b_num' in reg_feature_cols:
-                                feature_names.append('Is B2B')
+                            # Use same column-to-name mapping as model training
+                            col_to_name = {
+                                'slfi_avg_last5': 'Avg SPM (5g)',
+                                'slfi_avg_last3': 'Avg SPM (3g)',
+                                'slfi_avg_last10': 'Avg SPM (10g)',
+                                'slfi_momentum': 'SPM Momentum',
+                                'slfi_trend': 'SPM Trend',
+                                'minutes_avg_last5': 'Avg Minutes',
+                                'age': 'Age',
+                                'age_load': 'Age-Load',
+                                'age_b2b': 'Age×B2B',
+                                'recovery_penalty': 'Recovery Pen.',
+                                'effort_index_last5': 'Effort Idx',
+                                'slfi_std_last10': 'SPM Volatility',
+                                'is_b2b_num': 'Is B2B',
+                                'neural_proj_pts': 'Neural Pts',
+                                'neural_proj_fga': 'Neural FGA',
+                                'neural_proj_ts': 'Neural TS%',
+                                'neural_proj_tov_rate': 'Neural TOV',
+                                'neural_proj_game_score': 'Neural GameScore',
+                                'neural_expected_efficiency': 'Neural Eff',
+                                'neural_volume_efficiency': 'Neural Vol'
+                            }
+                            feature_names = [col_to_name.get(col, col) for col in reg_feature_cols]
 
                             shap_df = pd.DataFrame({
                                 'Feature': feature_names,
@@ -3627,6 +3771,146 @@ def predict_player_next_game(model, scalers, player_history, target_cols):
     pred_denorm = target_scaler.inverse_transform(pred_array)[0]
 
     return {name: pred_denorm[i] for i, name in enumerate(target_cols)}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_neural_projections_cached(data_hash, _model, _scalers, _target_cols, _raw_data):
+    """Cached version - call get_neural_projections_for_all_players internally."""
+    return _get_neural_projections_impl(_raw_data, _model, _scalers, _target_cols)
+
+
+def get_neural_projections_for_all_players(raw_data, model, scalers, target_cols):
+    """
+    Run neural model on all players' game histories to get projections.
+    Uses caching to avoid recomputation on each page load.
+    """
+    if model is None or scalers is None:
+        return pd.DataFrame()
+
+    # Create hash for caching
+    data_hash = hash((len(raw_data), raw_data['game_date'].max() if len(raw_data) > 0 else 0))
+
+    try:
+        return get_neural_projections_cached(data_hash, model, scalers, target_cols, raw_data)
+    except Exception:
+        # Fallback without caching
+        return _get_neural_projections_impl(raw_data, model, scalers, target_cols)
+
+
+def _get_neural_projections_impl(raw_data, model, scalers, target_cols):
+    """
+    Internal implementation: Run neural model on all players' game histories.
+
+    For each player-game, uses PRIOR 10 games to generate projection.
+    Optimized with batch processing where possible.
+
+    Returns:
+        DataFrame with columns: player, game_date, neural_proj_pts, neural_proj_fga,
+                               neural_proj_ts, neural_proj_tov_rate, neural_proj_game_score
+    """
+    if model is None or scalers is None:
+        return pd.DataFrame()
+
+    seq_scaler = scalers['seq_scaler']
+    target_scaler = scalers['target_scaler']
+    seq_features = scalers['seq_features']
+
+    # Pre-aggregate ALL players at once (much faster than per-player)
+    game_agg = raw_data.groupby(['player', 'game_date', 'game_id']).agg({
+        'pts': 'sum', 'trb': 'sum', 'ast': 'sum', 'stl': 'sum', 'blk': 'sum',
+        'tov': 'sum', 'pf': 'sum', 'fgm': 'sum', 'fga': 'sum', 'minutes': 'sum',
+        'win_loss': 'first'
+    }).reset_index()
+
+    # Rename and compute features
+    game_agg.columns = ['player', 'game_date', 'game_id', 'total_pts', 'total_trb', 'total_ast',
+                        'total_stl', 'total_blk', 'total_tov', 'total_pf', 'total_fgm',
+                        'total_fga', 'total_minutes', 'win_loss']
+
+    game_agg['fg_pct'] = np.where(game_agg['total_fga'] > 0,
+                                   game_agg['total_fgm'] / game_agg['total_fga'], 0)
+    game_agg['ts_pct'] = np.where(game_agg['total_fga'] > 0,
+                                   game_agg['total_pts'] / (2 * game_agg['total_fga']), 0)
+    game_agg['tov_rate'] = np.where((game_agg['total_fga'] + game_agg['total_tov']) > 0,
+                                     game_agg['total_tov'] / (game_agg['total_fga'] + game_agg['total_tov']), 0)
+    game_agg['game_score'] = (game_agg['total_pts'] + 0.4 * game_agg['total_fgm'] -
+                              0.7 * game_agg['total_fga'] + 0.7 * game_agg['total_trb'] +
+                              0.7 * game_agg['total_ast'] + game_agg['total_stl'] +
+                              0.7 * game_agg['total_blk'] - game_agg['total_tov'] -
+                              0.4 * game_agg['total_pf'])
+    game_agg['usage_proxy'] = np.where(game_agg['total_minutes'] > 0,
+                                        game_agg['total_fga'] / game_agg['total_minutes'] * 12, 0)
+    game_agg['is_win'] = (game_agg['win_loss'] == 'W').astype(int)
+
+    game_agg = game_agg.sort_values(['player', 'game_date']).reset_index(drop=True)
+
+    projections = []
+    players = game_agg['player'].unique()
+
+    for player in players:
+        player_history = game_agg[game_agg['player'] == player].reset_index(drop=True)
+
+        if len(player_history) < 5:
+            continue
+
+        # For each game (starting from game 5), use prior games to make projection
+        for idx in range(5, len(player_history)):
+            game_date = player_history.iloc[idx]['game_date']
+
+            # Use games BEFORE this one (prior 10)
+            prior_games = player_history.iloc[max(0, idx-10):idx]
+
+            if len(prior_games) < 5:
+                continue
+
+            try:
+                # Extract sequence features
+                sequence = prior_games[seq_features].values.astype(np.float32)
+
+                # Pad if needed
+                if len(sequence) < 10:
+                    padding = np.zeros((10 - len(sequence), len(seq_features)))
+                    sequence = np.vstack([padding, sequence])
+
+                # Scale and predict
+                sequence_scaled = seq_scaler.transform(sequence)
+                seq_tensor = torch.tensor(sequence_scaled, dtype=torch.float32).unsqueeze(0)
+                static_tensor = torch.tensor([0, 2, 27], dtype=torch.float32).unsqueeze(0)
+
+                with torch.no_grad():
+                    predictions = model(seq_tensor, static_tensor)
+
+                # Denormalize
+                pred_array = np.array([[predictions[name].numpy()[0, 0] for name in target_cols]])
+                pred_denorm = target_scaler.inverse_transform(pred_array)[0]
+
+                projections.append({
+                    'player': player,
+                    'game_date': game_date,
+                    'neural_proj_pts': pred_denorm[target_cols.index('total_pts')],
+                    'neural_proj_fga': pred_denorm[target_cols.index('total_fga')],
+                    'neural_proj_ts': pred_denorm[target_cols.index('ts_pct')],
+                    'neural_proj_tov_rate': pred_denorm[target_cols.index('tov_rate')],
+                    'neural_proj_game_score': pred_denorm[target_cols.index('game_score')]
+                })
+            except Exception:
+                continue
+
+    if not projections:
+        return pd.DataFrame()
+
+    proj_df = pd.DataFrame(projections)
+
+    # Add derived efficiency features
+    proj_df['neural_expected_efficiency'] = (
+        proj_df['neural_proj_ts'] * proj_df['neural_proj_pts'] /
+        (proj_df['neural_proj_fga'] + 1e-6)
+    )
+    proj_df['neural_volume_efficiency'] = (
+        proj_df['neural_proj_fga'] * proj_df['neural_proj_ts']
+    )
+
+    return proj_df
 
 
 def predictive_model_page():
