@@ -3932,13 +3932,15 @@ def predict_player_with_opponent_context(model, scalers, player_history, target_
     pace_ratio = opponent_metrics.get('pace', league_avg_pace) / league_avg_pace
     adjusted_pred['total_fga'] = adjusted_pred.get('total_fga', 0) * pace_ratio
 
-    # Home court advantage: +1.5 pts for home team
+    # Home court advantage: ~3 pts total for team, distributed per player (~0.4 pts each)
+    # Assuming ~8 players selected, 0.4 × 8 = 3.2 pts total advantage
+    home_bonus_per_player = 0.4
     if is_home:
-        adjusted_pred['total_pts'] = adjusted_pred.get('total_pts', 0) + 1.5
-        adjusted_pred['game_score'] = adjusted_pred.get('game_score', 0) + 1.0
+        adjusted_pred['total_pts'] = adjusted_pred.get('total_pts', 0) + home_bonus_per_player
+        adjusted_pred['game_score'] = adjusted_pred.get('game_score', 0) + 0.25
     else:
-        adjusted_pred['total_pts'] = adjusted_pred.get('total_pts', 0) - 1.5
-        adjusted_pred['game_score'] = adjusted_pred.get('game_score', 0) - 1.0
+        adjusted_pred['total_pts'] = adjusted_pred.get('total_pts', 0) - home_bonus_per_player
+        adjusted_pred['game_score'] = adjusted_pred.get('game_score', 0) - 0.25
 
     # Historical matchup adjustment (if available)
     if matchup_history is not None and matchup_history.get('n_games', 0) >= 2:
