@@ -2568,10 +2568,11 @@ def sprs_page():
             games['rest_factor'] = (3 - games['days_rest']) / 3.0 * 1.3  # Amplified
             games['cumulative_load'] = (games['consec_high_min'] / 3.0) * 1.5  # Amplified
 
+            # NOTE: Removed 'fatigue_trend' - it was using past Q4 drops to predict
+            # future Q4 drops (circular). Model should use workload factors only.
             feature_cols = [
                 'minutes_norm',      # This game's minutes
                 'workload_5g',       # Recent workload (5-game avg)
-                'fatigue_trend',     # Recent fatigue pattern
                 'age_factor',        # Age
                 'is_b2b_num',        # Back-to-back
                 'rest_factor',       # Days rest
@@ -2612,9 +2613,9 @@ def sprs_page():
                 raw_pred = model.predict(X_all_scaled)
                 model_df['fatigue_risk'] = (pd.Series(raw_pred).rank(pct=True) * 100).values
 
-                # Learned feature importance
+                # Learned feature importance (workload factors only)
                 learned_weights = dict(zip(
-                    ['Minutes', 'Workload (5g)', 'Fatigue Trend', 'Age', 'B2B', 'Rest', 'Consec. Load'],
+                    ['Minutes', 'Workload (5g)', 'Age', 'B2B', 'Rest', 'Consec. Load'],
                     model.feature_importances_ * 100
                 ))
 
