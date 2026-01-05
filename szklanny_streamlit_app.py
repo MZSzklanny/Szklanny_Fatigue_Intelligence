@@ -3782,6 +3782,326 @@ def predict_player_next_game(model, scalers, player_history, target_cols):
     return {name: pred_denorm[i] for i, name in enumerate(target_cols)}
 
 
+# =============================================================================
+# STEP 1: OPPONENT CONTEXT FEATURES
+# =============================================================================
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def calculate_team_defensive_metrics(df, team):
+    """
+    Calculate defensive metrics for a team (opponent context).
+
+    Returns:
+        dict with: def_rating, pace, ts_allowed, pts_allowed_per_game
+    """
+    # Get games where this team was the opponent (they were defending)
+    # We approximate by looking at games this team played and calculating opponent stats
+
+    team_games = df[df['team'] == team].copy()
+    if len(team_games) == 0:
+        return {'def_rating': 110.0, 'pace': 100.0, 'ts_allowed': 0.55, 'pts_allowed': 110.0}
+
+    # Get unique game IDs for this team
+    team_game_ids = team_games['game_id'].unique()
+
+    # Get opponent stats in those games (rows where game_id matches but team != this team)
+    opponent_stats = df[(df['game_id'].isin(team_game_ids)) & (df['team'] != team)].copy()
+
+    if len(opponent_stats) == 0:
+        return {'def_rating': 110.0, 'pace': 100.0, 'ts_allowed': 0.55, 'pts_allowed': 110.0}
+
+    # Aggregate opponent stats per game
+    opp_game_agg = opponent_stats.groupby('game_id').agg({
+        'pts': 'sum',
+        'fga': 'sum',
+        'fgm': 'sum',
+        'minutes': 'sum'
+    }).reset_index()
+
+    # Calculate defensive metrics
+    avg_pts_allowed = opp_game_agg['pts'].mean()
+    avg_fga_allowed = opp_game_agg['fga'].mean()
+    avg_fgm_allowed = opp_game_agg['fgm'].mean()
+
+    # TS% allowed = opponent points / (2 * opponent FGA)
+    ts_allowed = avg_pts_allowed / (2 * avg_fga_allowed) if avg_fga_allowed > 0 else 0.55
+
+    # Defensive rating proxy (pts allowed per 100 possessions, approximated)
+    # Using simple approximation: possessions ≈ FGA + 0.44*FTA + TOV
+    def_rating = avg_pts_allowed / (avg_fga_allowed * 0.9) * 100 if avg_fga_allowed > 0 else 110.0
+
+    # Pace proxy (total FGA per game)
+    pace = avg_fga_allowed * 1.1  # Approximate possessions
+
+    return {
+        'def_rating': min(max(def_rating, 95), 125),  # Clamp to reasonable range
+        'pace': min(max(pace, 90), 110),
+        'ts_allowed': min(max(ts_allowed, 0.45), 0.65),
+        'pts_allowed': avg_pts_allowed
+    }
+
+
+def get_player_vs_opponent_history(df, player, opponent_team, n_games=5):
+    """
+    Get player's historical performance against a specific opponent.
+
+    Returns:
+        dict with avg pts, ts%, ast, reb vs this opponent (or None if no history)
+    """
+    # Get games where player faced this opponent
+    player_games = df[df['player'] == player].copy()
+    if len(player_games) == 0:
+        return None
+
+    # Get game IDs where opponent played
+    opp_game_ids = df[df['team'] == opponent_team]['game_id'].unique()
+
+    # Find overlap (games where player faced opponent)
+    matchup_games = player_games[player_games['game_id'].isin(opp_game_ids)]
+
+    if len(matchup_games) == 0:
+        return None
+
+    # Aggregate to game level
+    game_agg = matchup_games.groupby('game_id').agg({
+        'pts': 'sum',
+        'fga': 'sum',
+        'fgm': 'sum',
+        'trb': 'sum',
+        'ast': 'sum'
+    }).reset_index()
+
+    # Take last n games
+    recent = game_agg.tail(n_games)
+
+    avg_pts = recent['pts'].mean()
+    avg_fga = recent['fga'].mean()
+    ts_pct = recent['pts'].sum() / (2 * recent['fga'].sum()) if recent['fga'].sum() > 0 else 0.5
+
+    return {
+        'avg_pts_vs_opp': avg_pts,
+        'avg_ts_vs_opp': ts_pct,
+        'avg_reb_vs_opp': recent['trb'].mean(),
+        'avg_ast_vs_opp': recent['ast'].mean(),
+        'n_games': len(recent)
+    }
+
+
+def predict_player_with_opponent_context(model, scalers, player_history, target_cols,
+                                          opponent_metrics, matchup_history, is_home=True):
+    """
+    Enhanced prediction that adjusts for opponent defensive context.
+
+    Args:
+        model, scalers, player_history, target_cols: Standard prediction inputs
+        opponent_metrics: Dict from calculate_team_defensive_metrics
+        matchup_history: Dict from get_player_vs_opponent_history (can be None)
+        is_home: Whether player's team is home
+
+    Returns:
+        dict of predictions with opponent-adjusted values
+    """
+    # Get base prediction
+    base_pred = predict_player_next_game(model, scalers, player_history, target_cols)
+    if base_pred is None:
+        return None
+
+    # Apply opponent context adjustments
+    adjusted_pred = base_pred.copy()
+
+    # Defensive rating adjustment
+    # League average def_rating ≈ 110, good defense < 108, bad defense > 112
+    league_avg_def = 110.0
+    def_diff = opponent_metrics.get('def_rating', league_avg_def) - league_avg_def
+
+    # Adjust points: better defense = fewer points, worse defense = more points
+    # Scale: 1 point of def_rating diff ≈ 0.3% change in scoring
+    pts_adjustment = def_diff * 0.003 * adjusted_pred.get('total_pts', 0)
+    adjusted_pred['total_pts'] = adjusted_pred.get('total_pts', 0) + pts_adjustment
+
+    # TS% adjustment based on opponent's TS% allowed
+    league_avg_ts_allowed = 0.55
+    ts_diff = opponent_metrics.get('ts_allowed', league_avg_ts_allowed) - league_avg_ts_allowed
+    ts_adjustment = ts_diff * 0.5  # Half the difference
+    adjusted_pred['ts_pct'] = adjusted_pred.get('ts_pct', 0.5) + ts_adjustment
+
+    # Pace adjustment for FGA
+    league_avg_pace = 100.0
+    pace_ratio = opponent_metrics.get('pace', league_avg_pace) / league_avg_pace
+    adjusted_pred['total_fga'] = adjusted_pred.get('total_fga', 0) * pace_ratio
+
+    # Home court advantage: +1.5 pts for home team
+    if is_home:
+        adjusted_pred['total_pts'] = adjusted_pred.get('total_pts', 0) + 1.5
+        adjusted_pred['game_score'] = adjusted_pred.get('game_score', 0) + 1.0
+    else:
+        adjusted_pred['total_pts'] = adjusted_pred.get('total_pts', 0) - 1.5
+        adjusted_pred['game_score'] = adjusted_pred.get('game_score', 0) - 1.0
+
+    # Historical matchup adjustment (if available)
+    if matchup_history is not None and matchup_history.get('n_games', 0) >= 2:
+        # Blend with historical performance vs this opponent (20% weight)
+        historical_pts = matchup_history.get('avg_pts_vs_opp', adjusted_pred.get('total_pts', 0))
+        adjusted_pred['total_pts'] = 0.8 * adjusted_pred.get('total_pts', 0) + 0.2 * historical_pts
+
+        historical_ts = matchup_history.get('avg_ts_vs_opp', adjusted_pred.get('ts_pct', 0.5))
+        adjusted_pred['ts_pct'] = 0.8 * adjusted_pred.get('ts_pct', 0.5) + 0.2 * historical_ts
+
+    # Clamp values to reasonable ranges
+    adjusted_pred['total_pts'] = max(0, adjusted_pred.get('total_pts', 0))
+    adjusted_pred['ts_pct'] = max(0.3, min(0.75, adjusted_pred.get('ts_pct', 0.5)))
+    adjusted_pred['tov_rate'] = max(0, min(0.4, adjusted_pred.get('tov_rate', 0.1)))
+
+    return adjusted_pred
+
+
+# =============================================================================
+# STEP 4: MONTE CARLO SIMULATION FOR WIN PROBABILITY
+# =============================================================================
+
+def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
+                                       n_simulations=1000, team_noise_std=3.0):
+    """
+    Run Monte Carlo simulation to estimate win probability and point differential distribution.
+
+    Args:
+        your_predictions_df: DataFrame with your team's player projections
+        opp_predictions_df: DataFrame with opponent's player projections
+        n_simulations: Number of simulations to run
+        team_noise_std: Standard deviation for team-level luck factor
+
+    Returns:
+        dict with:
+            - win_probability: float (0-1)
+            - point_diff_mean: float
+            - point_diff_std: float
+            - point_diff_ci: tuple (lower, upper) 90% CI
+            - your_score_mean, opp_score_mean: floats
+            - simulation_results: array of point differentials
+    """
+    np.random.seed(42)  # For reproducibility
+
+    # Get mean predictions for each player
+    your_pts_means = your_predictions_df['Proj PTS'].values if len(your_predictions_df) > 0 else np.array([0])
+    opp_pts_means = opp_predictions_df['Proj PTS'].values if len(opp_predictions_df) > 0 else np.array([0])
+
+    # Estimate player-level standard deviations (proportional to mean, ~25% CV)
+    your_pts_stds = your_pts_means * 0.25
+    opp_pts_stds = opp_pts_means * 0.25
+
+    # Run simulations
+    point_diffs = []
+    your_scores = []
+    opp_scores = []
+
+    for _ in range(n_simulations):
+        # Sample each player's points from normal distribution
+        your_sampled = np.maximum(0, np.random.normal(your_pts_means, your_pts_stds))
+        opp_sampled = np.maximum(0, np.random.normal(opp_pts_means, opp_pts_stds))
+
+        # Sum to team totals
+        your_total = your_sampled.sum()
+        opp_total = opp_sampled.sum()
+
+        # Add team-level noise (game variance, luck)
+        your_total += np.random.normal(0, team_noise_std)
+        opp_total += np.random.normal(0, team_noise_std)
+
+        your_scores.append(your_total)
+        opp_scores.append(opp_total)
+        point_diffs.append(your_total - opp_total)
+
+    point_diffs = np.array(point_diffs)
+    your_scores = np.array(your_scores)
+    opp_scores = np.array(opp_scores)
+
+    # Calculate statistics
+    win_prob = np.mean(point_diffs > 0)
+    point_diff_mean = np.mean(point_diffs)
+    point_diff_std = np.std(point_diffs)
+
+    # 90% confidence interval
+    ci_lower = np.percentile(point_diffs, 5)
+    ci_upper = np.percentile(point_diffs, 95)
+
+    # Percentiles for display
+    percentiles = {
+        5: np.percentile(point_diffs, 5),
+        25: np.percentile(point_diffs, 25),
+        50: np.percentile(point_diffs, 50),
+        75: np.percentile(point_diffs, 75),
+        95: np.percentile(point_diffs, 95)
+    }
+
+    return {
+        'win_probability': win_prob,
+        'point_diff_mean': point_diff_mean,
+        'point_diff_std': point_diff_std,
+        'point_diff_ci': (ci_lower, ci_upper),
+        'your_score_mean': np.mean(your_scores),
+        'your_score_std': np.std(your_scores),
+        'opp_score_mean': np.mean(opp_scores),
+        'opp_score_std': np.std(opp_scores),
+        'simulation_results': point_diffs,
+        'percentiles': percentiles
+    }
+
+
+def generate_matchup_insights(your_predictions_df, opp_predictions_df,
+                               your_team, opponent_team, opponent_metrics, sim_results):
+    """
+    Generate text insights about the matchup based on analysis.
+
+    Returns:
+        list of insight strings
+    """
+    insights = []
+
+    if len(your_predictions_df) == 0 or len(opp_predictions_df) == 0:
+        return insights
+
+    # Top scorer insight
+    your_top = your_predictions_df.loc[your_predictions_df['Proj PTS'].idxmax()]
+    opp_top = opp_predictions_df.loc[opp_predictions_df['Proj PTS'].idxmax()]
+
+    # Defensive context insight
+    def_rating = opponent_metrics.get('def_rating', 110)
+    if def_rating < 108:
+        insights.append(f"⚠️ {opponent_team} has elite defense (Def Rtg: {def_rating:.1f}) - expect tougher scoring")
+    elif def_rating > 112:
+        insights.append(f"✅ {opponent_team} has weak defense (Def Rtg: {def_rating:.1f}) - favorable matchup for scoring")
+
+    # TS% allowed insight
+    ts_allowed = opponent_metrics.get('ts_allowed', 0.55)
+    if ts_allowed > 0.57:
+        insights.append(f"📈 {opponent_team} allows high TS% ({ts_allowed:.1%}) - efficient shots available")
+    elif ts_allowed < 0.53:
+        insights.append(f"📉 {opponent_team} forces low TS% ({ts_allowed:.1%}) - shot quality may suffer")
+
+    # Win probability insight
+    win_prob = sim_results.get('win_probability', 0.5)
+    if win_prob > 0.70:
+        insights.append(f"🎯 Strong favorite ({win_prob:.0%} win probability) - expect comfortable win")
+    elif win_prob < 0.30:
+        insights.append(f"⚡ Significant underdog ({win_prob:.0%} win probability) - upset needed")
+    elif 0.45 <= win_prob <= 0.55:
+        insights.append(f"🔄 True toss-up ({win_prob:.0%} win probability) - could go either way")
+
+    # Point differential spread insight
+    ci_lower, ci_upper = sim_results.get('point_diff_ci', (-10, 10))
+    spread = ci_upper - ci_lower
+    if spread > 25:
+        insights.append(f"📊 High variance game (90% CI: {ci_lower:+.0f} to {ci_upper:+.0f}) - anything possible")
+
+    # Top scorer mismatch
+    if your_top['Proj PTS'] > opp_top['Proj PTS'] + 5:
+        insights.append(f"🌟 Star advantage: {your_top['Player']} projected for {your_top['Proj PTS']:.1f} pts vs {opp_top['Player']}'s {opp_top['Proj PTS']:.1f}")
+    elif opp_top['Proj PTS'] > your_top['Proj PTS'] + 5:
+        insights.append(f"⚠️ Opponent star threat: {opp_top['Player']} projected for {opp_top['Proj PTS']:.1f} pts")
+
+    return insights[:5]  # Limit to 5 insights
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_neural_projections_cached(data_hash, _model, _scalers, _target_cols, _raw_data):
     """Cached version - call get_neural_projections_for_all_players internally."""
@@ -4074,25 +4394,51 @@ def predictive_model_page():
             st.warning(f"Select at least 5 players for {opponent_team} (currently {len(opp_lineup)} selected)")
             return
 
+        # Game settings
+        st.markdown("---")
+        st.markdown("### ⚙️ Game Settings")
+        col_set1, col_set2 = st.columns(2)
+        with col_set1:
+            is_home = st.checkbox(f"{your_team} is HOME team", value=True, key="is_home")
+        with col_set2:
+            n_simulations = st.selectbox("Simulations", [500, 1000, 2000], index=1, key="n_sims")
+
         # Generate predictions for all players
         st.markdown("---")
         st.markdown("## 📊 Game Prediction")
 
-        def predict_lineup(lineup, team_name):
-            """Generate predictions for a full lineup."""
+        # Calculate opponent defensive metrics (Step 1)
+        your_def_metrics = calculate_team_defensive_metrics(df, your_team)
+        opp_def_metrics = calculate_team_defensive_metrics(df, opponent_team)
+
+        def predict_lineup_with_context(lineup, team_name, opponent_metrics, is_home_team):
+            """Generate predictions for a full lineup with opponent context."""
             predictions = []
             for player in lineup:
                 player_history = prepare_player_game_history(df, player)
                 if len(player_history) >= 5:
-                    pred = predict_player_next_game(model, scalers, player_history, target_cols)
+                    # Get historical matchup data
+                    opponent_name = opponent_team if team_name == your_team else your_team
+                    matchup_history = get_player_vs_opponent_history(df, player, opponent_name)
+
+                    # Use enhanced prediction with opponent context
+                    pred = predict_player_with_opponent_context(
+                        model, scalers, player_history, target_cols,
+                        opponent_metrics, matchup_history, is_home=is_home_team
+                    )
+
                     if pred is not None:
-                        # Use neural model for PTS, FGA, TS%, TOV%, Game Score
-                        # Use 5-game rolling average for REB, AST, STL, BLK (not predicted by model)
+                        # Use 5-game rolling average for REB, AST, STL, BLK
                         recent_5 = player_history.tail(5)
                         avg_reb = recent_5['total_trb'].mean() if 'total_trb' in recent_5.columns else 0
                         avg_ast = recent_5['total_ast'].mean() if 'total_ast' in recent_5.columns else 0
                         avg_stl = recent_5['total_stl'].mean() if 'total_stl' in recent_5.columns else 0
                         avg_blk = recent_5['total_blk'].mean() if 'total_blk' in recent_5.columns else 0
+
+                        # Matchup indicator
+                        matchup_info = ""
+                        if matchup_history and matchup_history.get('n_games', 0) >= 2:
+                            matchup_info = f"({matchup_history['n_games']}g vs {opponent_name})"
 
                         predictions.append({
                             'Player': player,
@@ -4105,15 +4451,34 @@ def predictive_model_page():
                             'Proj FGA': pred.get('total_fga', 0),
                             'TS%': pred.get('ts_pct', 0) * 100,
                             'TOV%': pred.get('tov_rate', 0) * 100,
-                            'Game Score': pred.get('game_score', 0)
+                            'Game Score': pred.get('game_score', 0),
+                            'Matchup': matchup_info
                         })
             return pd.DataFrame(predictions)
 
-        with st.spinner("Generating predictions..."):
-            your_predictions = predict_lineup(your_lineup, your_team)
-            opp_predictions = predict_lineup(opp_lineup, opponent_team)
+        with st.spinner("Generating opponent-adjusted predictions..."):
+            your_predictions = predict_lineup_with_context(
+                your_lineup, your_team, opp_def_metrics, is_home
+            )
+            opp_predictions = predict_lineup_with_context(
+                opp_lineup, opponent_team, your_def_metrics, not is_home
+            )
 
-        # Calculate team totals
+        # Run Monte Carlo simulation (Step 4)
+        with st.spinner(f"Running {n_simulations} game simulations..."):
+            sim_results = run_monte_carlo_matchup_simulation(
+                your_predictions, opp_predictions,
+                n_simulations=n_simulations, team_noise_std=3.5
+            )
+
+        # Extract simulation results
+        win_prob = sim_results['win_probability']
+        point_diff_mean = sim_results['point_diff_mean']
+        your_score_mean = sim_results['your_score_mean']
+        opp_score_mean = sim_results['opp_score_mean']
+        ci_lower, ci_upper = sim_results['point_diff_ci']
+
+        # Calculate team totals from predictions
         your_total_pts = your_predictions['Proj PTS'].sum() if len(your_predictions) > 0 else 0
         opp_total_pts = opp_predictions['Proj PTS'].sum() if len(opp_predictions) > 0 else 0
 
@@ -4132,53 +4497,130 @@ def predictive_model_page():
         your_avg_ts = your_predictions['TS%'].mean() if len(your_predictions) > 0 else 0
         opp_avg_ts = opp_predictions['TS%'].mean() if len(opp_predictions) > 0 else 0
 
-        # Determine winner
-        point_diff = your_total_pts - opp_total_pts
-        if point_diff > 5:
+        # Determine winner based on Monte Carlo simulation
+        if win_prob >= 0.55:
             winner = your_team
-            confidence = min(95, 55 + abs(point_diff) * 2)
             win_color = "🟢"
-        elif point_diff < -5:
+        elif win_prob <= 0.45:
             winner = opponent_team
-            confidence = min(95, 55 + abs(point_diff) * 2)
             win_color = "🔴"
         else:
             winner = "Toss-up"
-            confidence = 50 + abs(point_diff)
             win_color = "🟡"
 
-        # Display matchup summary
+        # Display matchup summary with Monte Carlo results
         st.markdown("### 🏆 Matchup Summary")
+
+        # Big score display
+        st.markdown(f"""
+        <div style='text-align: center; padding: 20px; background: rgba(26,45,74,0.5); border-radius: 15px; margin-bottom: 20px;'>
+            <h1 style='margin: 0; font-size: 2.5rem;'>
+                {your_team} <span style='color: #10B981;'>{your_score_mean:.0f}</span>
+                &nbsp;-&nbsp;
+                <span style='color: #EF4444;'>{opp_score_mean:.0f}</span> {opponent_team}
+            </h1>
+            <p style='color: rgba(255,255,255,0.7); margin-top: 10px;'>
+                90% CI: {ci_lower:+.0f} to {ci_upper:+.0f} point differential
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
         col1, col2, col3 = st.columns([2, 1, 2])
 
         with col1:
-            st.markdown(f"### {your_team}")
-            st.metric("Projected Points", f"{your_total_pts:.0f}")
+            st.markdown(f"### {your_team} {'🏠' if is_home else '✈️'}")
+            st.metric("Projected Points", f"{your_score_mean:.0f}", delta=f"±{sim_results['your_score_std']:.0f}")
             st.metric("Projected Rebounds", f"{your_total_reb:.0f}")
             st.metric("Projected Assists", f"{your_total_ast:.0f}")
-            st.metric("Projected STL/BLK", f"{your_total_stl:.0f}/{your_total_blk:.0f}")
             st.metric("Avg TS%", f"{your_avg_ts:.1f}%")
 
         with col2:
             st.markdown("### VS")
             if winner == your_team:
-                st.markdown(f"## {win_color} **{your_team} WINS**")
+                st.markdown(f"## {win_color} **{your_team}**")
             elif winner == opponent_team:
-                st.markdown(f"## {win_color} **{opponent_team} WINS**")
+                st.markdown(f"## {win_color} **{opponent_team}**")
             else:
                 st.markdown(f"## {win_color} **TOSS-UP**")
-            st.metric("Win Probability", f"{confidence:.0f}%")
-            st.metric("Point Diff", f"{point_diff:+.0f}")
-            st.metric("Rebound Diff", f"{your_total_reb - opp_total_reb:+.0f}")
+            st.metric("Win Probability", f"{win_prob:.0%}")
+            st.metric("Expected Margin", f"{point_diff_mean:+.1f}")
+            st.caption(f"Based on {n_simulations} simulations")
 
         with col3:
-            st.markdown(f"### {opponent_team}")
-            st.metric("Projected Points", f"{opp_total_pts:.0f}")
+            st.markdown(f"### {opponent_team} {'✈️' if is_home else '🏠'}")
+            st.metric("Projected Points", f"{opp_score_mean:.0f}", delta=f"±{sim_results['opp_score_std']:.0f}")
             st.metric("Projected Rebounds", f"{opp_total_reb:.0f}")
             st.metric("Projected Assists", f"{opp_total_ast:.0f}")
-            st.metric("Projected STL/BLK", f"{opp_total_stl:.0f}/{opp_total_blk:.0f}")
             st.metric("Avg TS%", f"{opp_avg_ts:.1f}%")
+
+        # Point Differential Distribution Histogram (Step 6)
+        st.markdown("---")
+        st.markdown("### 📊 Simulation Distribution")
+
+        fig_hist = go.Figure()
+        fig_hist.add_trace(go.Histogram(
+            x=sim_results['simulation_results'],
+            nbinsx=50,
+            marker_color='#4A90D9',
+            opacity=0.7,
+            name='Simulated Outcomes'
+        ))
+
+        # Add vertical lines for key percentiles
+        fig_hist.add_vline(x=0, line_dash="dash", line_color="white", annotation_text="Tie")
+        fig_hist.add_vline(x=point_diff_mean, line_dash="solid", line_color="#10B981",
+                          annotation_text=f"Mean: {point_diff_mean:+.1f}")
+
+        fig_hist.update_layout(
+            title=f"Point Differential Distribution ({n_simulations} simulations)",
+            xaxis_title=f"Point Differential ({your_team} - {opponent_team})",
+            yaxis_title="Frequency",
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(26,45,74,0.3)',
+            height=350,
+            showlegend=False
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+        # Show percentile breakdown
+        percentiles = sim_results['percentiles']
+        st.markdown(f"""
+        **Outcome Percentiles:**
+        - 5th: {percentiles[5]:+.0f} | 25th: {percentiles[25]:+.0f} | **Median: {percentiles[50]:+.0f}** | 75th: {percentiles[75]:+.0f} | 95th: {percentiles[95]:+.0f}
+        """)
+
+        # Generate and display insights
+        st.markdown("---")
+        st.markdown("### 🔍 Key Insights")
+
+        insights = generate_matchup_insights(
+            your_predictions, opp_predictions,
+            your_team, opponent_team, opp_def_metrics, sim_results
+        )
+
+        if insights:
+            for insight in insights:
+                st.markdown(f"- {insight}")
+        else:
+            st.info("Not enough data to generate specific insights.")
+
+        # Opponent Defensive Context
+        st.markdown("---")
+        st.markdown("### 🛡️ Opponent Defensive Context")
+        col_def1, col_def2 = st.columns(2)
+
+        with col_def1:
+            st.markdown(f"**{opponent_team} Defense (vs your team):**")
+            st.metric("Defensive Rating", f"{opp_def_metrics['def_rating']:.1f}",
+                     delta=f"{opp_def_metrics['def_rating'] - 110:+.1f} vs league avg", delta_color="inverse")
+            st.metric("TS% Allowed", f"{opp_def_metrics['ts_allowed']:.1%}")
+
+        with col_def2:
+            st.markdown(f"**{your_team} Defense (vs opponent):**")
+            st.metric("Defensive Rating", f"{your_def_metrics['def_rating']:.1f}",
+                     delta=f"{your_def_metrics['def_rating'] - 110:+.1f} vs league avg", delta_color="inverse")
+            st.metric("TS% Allowed", f"{your_def_metrics['ts_allowed']:.1%}")
 
         # Detailed player predictions
         st.markdown("---")
