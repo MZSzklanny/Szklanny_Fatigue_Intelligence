@@ -2691,11 +2691,16 @@ def sprs_page():
                         # Show risk breakdown for latest game
                         st.markdown("**Latest Game Risk Breakdown:**")
                         breakdown_cols = st.columns(5)
-                        breakdown_cols[0].metric("B2B", f"{latest_game.get('risk_b2b', 0):.0f}/30")
-                        breakdown_cols[1].metric("Rest", f"{latest_game.get('risk_rest', 0):.0f}/25")
-                        breakdown_cols[2].metric("Workload", f"{latest_game.get('risk_minutes', 0):.0f}/20")
-                        breakdown_cols[3].metric("Age×Load", f"{latest_game.get('risk_age', 0):.0f}/15")
-                        breakdown_cols[4].metric("Consec.", f"{latest_game.get('risk_consec', 0):.0f}/10")
+                        breakdown_cols[0].metric("B2B", f"{latest_game.get('risk_b2b', 0):.0f}/30",
+                                                help="Back-to-back game penalty")
+                        breakdown_cols[1].metric("Rest", f"{latest_game.get('risk_rest', 0):.0f}/25",
+                                                help="Less than 2 days rest")
+                        breakdown_cols[2].metric("Workload", f"{latest_game.get('risk_minutes', 0):.0f}/20",
+                                                help="5-game average minutes")
+                        breakdown_cols[3].metric("Age×Load", f"{latest_game.get('risk_age', 0):.0f}/15",
+                                                help="Age penalty under high workload")
+                        breakdown_cols[4].metric("Heavy Streak", f"{latest_game.get('risk_consec', 0):.0f}/10",
+                                                help="Consecutive games with 35+ minutes")
 
                 st.markdown("---")
                 st.markdown("### 📊 Risk Factor Weights")
