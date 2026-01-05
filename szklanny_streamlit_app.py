@@ -4199,7 +4199,8 @@ def redistribute_minutes_for_lineup(df, selected_players, team, target_total=240
     # we need to boost them by 240/80 = 3x
     # But cap the multiplier to be realistic (max 1.5x typical minutes)
 
-    redistribution_factor = min(target_total / total_baseline, 1.5)
+    # Cap redistribution at 1.25x - bench players can't scale up as efficiently as starters
+    redistribution_factor = min(target_total / total_baseline, 1.25)
 
     # Calculate new projected minutes for each player
     multipliers = {}
@@ -4217,12 +4218,14 @@ def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minut
     """
     Adjust a player's stat projection based on increased minutes.
 
-    Stats scale differently with minutes:
-    - Points: ~80% scales with minutes (some comes from efficiency)
-    - FGA: ~90% scales with minutes
-    - Rebounds: ~70% scales with minutes
-    - Assists: ~75% scales with minutes
-    - Game Score: ~80% scales with minutes
+    Stats scale differently with minutes, AND efficiency decays with larger boosts.
+    - Points: ~70% scales with minutes (efficiency drops with fatigue/defensive focus)
+    - FGA: ~85% scales with minutes
+    - Rebounds: ~65% scales with minutes
+    - Assists: ~70% scales with minutes
+    - Game Score: ~70% scales with minutes
+
+    Efficiency decay: Players getting 20%+ more minutes see reduced per-minute production.
     """
     if minutes_multiplier <= 1.0:
         return prediction
@@ -4232,21 +4235,26 @@ def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minut
     # Calculate the boost above 1.0
     boost = minutes_multiplier - 1.0
 
-    # Apply scaled boosts
+    # Efficiency decay factor: larger boosts = lower scaling
+    # A 25% minutes boost has ~10% efficiency decay
+    efficiency_decay = 1.0 - (boost * 0.4)  # 25% boost -> 0.9 efficiency
+    efficiency_decay = max(efficiency_decay, 0.75)  # Floor at 75% efficiency
+
+    # Apply scaled boosts with efficiency decay
     if 'Proj PTS' in adjusted:
-        adjusted['Proj PTS'] = prediction['Proj PTS'] * (1 + boost * 0.80)
+        adjusted['Proj PTS'] = prediction['Proj PTS'] * (1 + boost * 0.70 * efficiency_decay)
     if 'Proj FGA' in adjusted:
-        adjusted['Proj FGA'] = prediction['Proj FGA'] * (1 + boost * 0.90)
+        adjusted['Proj FGA'] = prediction['Proj FGA'] * (1 + boost * 0.85)
     if 'Proj REB' in adjusted:
-        adjusted['Proj REB'] = prediction['Proj REB'] * (1 + boost * 0.70)
+        adjusted['Proj REB'] = prediction['Proj REB'] * (1 + boost * 0.65 * efficiency_decay)
     if 'Proj AST' in adjusted:
-        adjusted['Proj AST'] = prediction['Proj AST'] * (1 + boost * 0.75)
+        adjusted['Proj AST'] = prediction['Proj AST'] * (1 + boost * 0.70 * efficiency_decay)
     if 'Proj STL' in adjusted:
-        adjusted['Proj STL'] = prediction['Proj STL'] * (1 + boost * 0.60)
+        adjusted['Proj STL'] = prediction['Proj STL'] * (1 + boost * 0.55)
     if 'Proj BLK' in adjusted:
-        adjusted['Proj BLK'] = prediction['Proj BLK'] * (1 + boost * 0.60)
+        adjusted['Proj BLK'] = prediction['Proj BLK'] * (1 + boost * 0.55)
     if 'Game Score' in adjusted:
-        adjusted['Game Score'] = prediction['Game Score'] * (1 + boost * 0.80)
+        adjusted['Game Score'] = prediction['Game Score'] * (1 + boost * 0.70 * efficiency_decay)
 
     # Add minutes info
     adjusted['Proj MIN'] = base_minutes * minutes_multiplier
