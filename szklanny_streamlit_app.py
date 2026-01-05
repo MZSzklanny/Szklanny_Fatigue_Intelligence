@@ -2959,10 +2959,10 @@ def sprs_page():
             - Better captures non-linear relationships
             - Feature importance shows relative predictive power
 
-            ### SHAP Explanations
-            Uses SHAP (SHapley Additive exPlanations) to show which features drove each prediction.
-            - Green bars = features improving predicted SPM
-            - Red bars = features worsening predicted SPM
+            ### Prediction Explanations
+            Clear breakdown of what's driving each prediction:
+            - **Positive Factors** = conditions supporting good performance
+            - **Risk Factors** = conditions suggesting fatigue concern
             """)
 
         st.markdown("---")
@@ -3474,70 +3474,79 @@ def sprs_page():
                         else:
                             st.info(f"ℹ️ **MODERATE** - SPM {predicted_spm:+.2f} in normal range")
 
-                        # SHAP explanation
-                        st.markdown("#### Explain This Prediction (SHAP)")
-                        try:
-                            import shap
-                            import matplotlib.pyplot as plt
+                        # Text explanation of prediction factors
+                        st.markdown("#### What's Driving This Prediction?")
 
-                            # Create explainer (TreeExplainer for GradientBoosting)
-                            explainer = shap.TreeExplainer(reg_model)
-                            shap_values = explainer.shap_values(X_pred_scaled)
+                        factors_positive = []
+                        factors_negative = []
+                        factors_neutral = []
 
-                            # Use same column-to-name mapping as model training
-                            col_to_name = {
-                                'slfi_avg_last5': 'Avg SPM (5g)',
-                                'slfi_avg_last3': 'Avg SPM (3g)',
-                                'slfi_avg_last10': 'Avg SPM (10g)',
-                                'slfi_momentum': 'SPM Momentum',
-                                'slfi_trend': 'SPM Trend',
-                                'minutes_avg_last5': 'Avg Minutes',
-                                'age': 'Age',
-                                'age_load': 'Age-Load',
-                                'age_b2b': 'Age×B2B',
-                                'recovery_penalty': 'Recovery Pen.',
-                                'effort_index_last5': 'Effort Idx',
-                                'slfi_std_last10': 'SPM Volatility',
-                                'is_b2b_num': 'Is B2B',
-                                'neural_proj_pts': 'Neural Pts',
-                                'neural_proj_fga': 'Neural FGA',
-                                'neural_proj_ts': 'Neural TS%',
-                                'neural_proj_tov_rate': 'Neural TOV',
-                                'neural_proj_game_score': 'Neural GameScore',
-                                'neural_expected_efficiency': 'Neural Eff',
-                                'neural_volume_efficiency': 'Neural Vol'
-                            }
-                            feature_names = [col_to_name.get(col, col) for col in reg_feature_cols]
+                        # Analyze each factor
+                        if pred_avg5 > 0.3:
+                            factors_positive.append(f"**Strong recent form** (Avg SPM {pred_avg5:+.2f} over 5 games)")
+                        elif pred_avg5 < -0.3:
+                            factors_negative.append(f"**Poor recent form** (Avg SPM {pred_avg5:+.2f} over 5 games)")
+                        else:
+                            factors_neutral.append(f"Average recent form (SPM {pred_avg5:+.2f})")
 
-                            shap_df = pd.DataFrame({
-                                'Feature': feature_names,
-                                'SHAP Value': shap_values[0],
-                                'Direction': ['Increases SPM' if v > 0 else 'Decreases SPM' for v in shap_values[0]]
-                            }).sort_values('SHAP Value', key=abs, ascending=True)
+                        if pred_momentum > 0.2:
+                            factors_positive.append(f"**Positive momentum** ({pred_momentum:+.2f}) - trending up")
+                        elif pred_momentum < -0.2:
+                            factors_negative.append(f"**Negative momentum** ({pred_momentum:+.2f}) - trending down")
 
-                            fig_shap = px.bar(shap_df, x='SHAP Value', y='Feature', orientation='h',
-                                            color='SHAP Value', color_continuous_scale=['red', 'gray', 'green'],
-                                            title='Feature Contributions to Prediction')
-                            fig_shap.update_layout(**get_chart_layout(), height=350)
-                            st.plotly_chart(fig_shap, use_container_width=True)
+                        if pred_trend > 0.1:
+                            factors_positive.append(f"**Upward trend** in performance")
+                        elif pred_trend < -0.1:
+                            factors_negative.append(f"**Downward trend** in performance")
 
-                            # Text explanation
-                            top_pos = shap_df[shap_df['SHAP Value'] > 0].nlargest(2, 'SHAP Value')
-                            top_neg = shap_df[shap_df['SHAP Value'] < 0].nsmallest(2, 'SHAP Value')
+                        if pred_is_b2b:
+                            factors_negative.append(f"**Back-to-back game** - fatigue risk elevated")
 
-                            explanation_parts = []
-                            if len(top_pos) > 0:
-                                explanation_parts.append(f"**Helping:** {', '.join(top_pos['Feature'].tolist())}")
-                            if len(top_neg) > 0:
-                                explanation_parts.append(f"**Hurting:** {', '.join(top_neg['Feature'].tolist())}")
+                        if pred_recovery < -0.3:
+                            factors_negative.append(f"**Recovery penalty** ({pred_recovery:.2f}) - insufficient rest")
+                        elif pred_recovery > 0:
+                            factors_positive.append(f"**Well rested** - good recovery time")
 
-                            if explanation_parts:
-                                st.info(" | ".join(explanation_parts))
+                        if pred_age >= 32:
+                            factors_negative.append(f"**Age factor** ({pred_age}) - higher fatigue sensitivity")
+                        elif pred_age <= 25:
+                            factors_positive.append(f"**Youth advantage** ({pred_age}) - better recovery capacity")
 
-                        except ImportError:
-                            st.warning("SHAP not installed. Run: pip install shap")
-                        except Exception as e:
-                            st.warning(f"SHAP explanation unavailable: {str(e)}")
+                        if pred_minutes > 34:
+                            factors_negative.append(f"**High minutes load** ({pred_minutes:.1f} avg) - accumulated fatigue")
+                        elif pred_minutes < 28:
+                            factors_positive.append(f"**Managed minutes** ({pred_minutes:.1f} avg) - fresh legs")
+
+                        if pred_std > 0.8:
+                            factors_negative.append(f"**Inconsistent** (volatility {pred_std:.2f}) - unpredictable output")
+                        elif pred_std < 0.4:
+                            factors_positive.append(f"**Consistent performer** (volatility {pred_std:.2f})")
+
+                        # Display factors
+                        col_pos, col_neg = st.columns(2)
+                        with col_pos:
+                            if factors_positive:
+                                st.markdown("**✅ Positive Factors:**")
+                                for f in factors_positive:
+                                    st.markdown(f"- {f}")
+                            else:
+                                st.markdown("**✅ Positive Factors:**\n- None significant")
+
+                        with col_neg:
+                            if factors_negative:
+                                st.markdown("**⚠️ Risk Factors:**")
+                                for f in factors_negative:
+                                    st.markdown(f"- {f}")
+                            else:
+                                st.markdown("**⚠️ Risk Factors:**\n- None significant")
+
+                        # Summary interpretation
+                        if len(factors_negative) > len(factors_positive) + 1:
+                            st.warning("⚠️ Multiple risk factors suggest elevated fatigue likelihood")
+                        elif len(factors_positive) > len(factors_negative) + 1:
+                            st.success("✅ Positive indicators outweigh risks - expect solid performance")
+                        else:
+                            st.info("ℹ️ Mixed signals - monitor closely for in-game fatigue signs")
 
                 else:
                     st.warning("Not enough data for regression model (need 50+ records).")
