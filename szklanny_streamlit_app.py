@@ -4104,6 +4104,129 @@ def generate_matchup_insights(your_predictions_df, opp_predictions_df,
     return insights[:5]  # Limit to 5 insights
 
 
+# =============================================================================
+# LINEUP MINUTES/USAGE REDISTRIBUTION
+# =============================================================================
+
+def calculate_player_baseline_minutes(df, player):
+    """Get a player's average minutes from recent games."""
+    player_data = df[df['player'] == player]
+    if len(player_data) == 0:
+        return 20.0  # Default fallback
+
+    # Aggregate to game level
+    game_mins = player_data.groupby('game_id')['minutes'].sum()
+
+    # Use last 10 games average
+    recent_mins = game_mins.tail(10).mean()
+    return recent_mins if not pd.isna(recent_mins) else 20.0
+
+
+def calculate_team_typical_minutes(df, team):
+    """
+    Calculate a team's typical total player-minutes per game.
+    Standard NBA game = 240 minutes (5 players × 48 minutes).
+    """
+    team_data = df[df['team'] == team]
+    if len(team_data) == 0:
+        return 240.0
+
+    # Get total minutes per game
+    game_mins = team_data.groupby('game_id')['minutes'].sum()
+    return game_mins.mean() if len(game_mins) > 0 else 240.0
+
+
+def redistribute_minutes_for_lineup(df, selected_players, team, target_total=240.0):
+    """
+    Redistribute minutes among selected players when starters are out.
+
+    Logic:
+    1. Get each selected player's historical average minutes
+    2. Calculate what share of team minutes they typically get
+    3. Redistribute minutes proportionally to fill gaps from missing players
+    4. Return multiplier for each player's stats
+
+    Args:
+        df: Full dataframe
+        selected_players: List of players in lineup
+        team: Team name
+        target_total: Target total minutes (default 240 = full game)
+
+    Returns:
+        dict mapping player -> minutes_multiplier
+    """
+    # Get baseline minutes for each selected player
+    player_minutes = {}
+    for player in selected_players:
+        player_minutes[player] = calculate_player_baseline_minutes(df, player)
+
+    # Sum of selected players' typical minutes
+    total_baseline = sum(player_minutes.values())
+
+    if total_baseline == 0:
+        return {p: 1.0 for p in selected_players}
+
+    # Calculate how much we need to scale up
+    # If typical starters played 180 mins and we only selected bench (80 mins),
+    # we need to boost them by 240/80 = 3x
+    # But cap the multiplier to be realistic (max 1.5x typical minutes)
+
+    redistribution_factor = min(target_total / total_baseline, 1.5)
+
+    # Calculate new projected minutes for each player
+    multipliers = {}
+    for player, base_mins in player_minutes.items():
+        new_mins = base_mins * redistribution_factor
+        # Cap individual player minutes at 42 (realistic max)
+        new_mins = min(new_mins, 42.0)
+        multiplier = new_mins / base_mins if base_mins > 0 else 1.0
+        multipliers[player] = multiplier
+
+    return multipliers
+
+
+def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minutes):
+    """
+    Adjust a player's stat projection based on increased minutes.
+
+    Stats scale differently with minutes:
+    - Points: ~80% scales with minutes (some comes from efficiency)
+    - FGA: ~90% scales with minutes
+    - Rebounds: ~70% scales with minutes
+    - Assists: ~75% scales with minutes
+    - Game Score: ~80% scales with minutes
+    """
+    if minutes_multiplier <= 1.0:
+        return prediction
+
+    adjusted = prediction.copy()
+
+    # Calculate the boost above 1.0
+    boost = minutes_multiplier - 1.0
+
+    # Apply scaled boosts
+    if 'Proj PTS' in adjusted:
+        adjusted['Proj PTS'] = prediction['Proj PTS'] * (1 + boost * 0.80)
+    if 'Proj FGA' in adjusted:
+        adjusted['Proj FGA'] = prediction['Proj FGA'] * (1 + boost * 0.90)
+    if 'Proj REB' in adjusted:
+        adjusted['Proj REB'] = prediction['Proj REB'] * (1 + boost * 0.70)
+    if 'Proj AST' in adjusted:
+        adjusted['Proj AST'] = prediction['Proj AST'] * (1 + boost * 0.75)
+    if 'Proj STL' in adjusted:
+        adjusted['Proj STL'] = prediction['Proj STL'] * (1 + boost * 0.60)
+    if 'Proj BLK' in adjusted:
+        adjusted['Proj BLK'] = prediction['Proj BLK'] * (1 + boost * 0.60)
+    if 'Game Score' in adjusted:
+        adjusted['Game Score'] = prediction['Game Score'] * (1 + boost * 0.80)
+
+    # Add minutes info
+    adjusted['Proj MIN'] = base_minutes * minutes_multiplier
+    adjusted['MIN Boost'] = f"+{(minutes_multiplier - 1) * 100:.0f}%"
+
+    return adjusted
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_neural_projections_cached(data_hash, _model, _scalers, _target_cols, _raw_data):
     """Cached version - call get_neural_projections_for_all_players internally."""
@@ -4413,8 +4536,20 @@ def predictive_model_page():
         your_def_metrics = calculate_team_defensive_metrics(df, your_team)
         opp_def_metrics = calculate_team_defensive_metrics(df, opponent_team)
 
-        def predict_lineup_with_context(lineup, team_name, opponent_metrics, is_home_team):
-            """Generate predictions for a full lineup with opponent context."""
+        # Calculate minutes redistribution based on selected lineup
+        your_minutes_multipliers = redistribute_minutes_for_lineup(df, your_lineup, your_team)
+        opp_minutes_multipliers = redistribute_minutes_for_lineup(df, opp_lineup, opponent_team)
+
+        # Show minutes redistribution info if significant
+        your_max_boost = max(your_minutes_multipliers.values()) if your_minutes_multipliers else 1.0
+        opp_max_boost = max(opp_minutes_multipliers.values()) if opp_minutes_multipliers else 1.0
+
+        if your_max_boost > 1.1 or opp_max_boost > 1.1:
+            st.info(f"📊 **Minutes Redistribution Active**: Adjusting projections based on available players. "
+                   f"{your_team} max boost: {(your_max_boost-1)*100:.0f}%, {opponent_team} max boost: {(opp_max_boost-1)*100:.0f}%")
+
+        def predict_lineup_with_context(lineup, team_name, opponent_metrics, is_home_team, minutes_multipliers):
+            """Generate predictions for a full lineup with opponent context and minutes redistribution."""
             predictions = []
             for player in lineup:
                 player_history = prepare_player_game_history(df, player)
@@ -4436,13 +4571,18 @@ def predictive_model_page():
                         avg_ast = recent_5['total_ast'].mean() if 'total_ast' in recent_5.columns else 0
                         avg_stl = recent_5['total_stl'].mean() if 'total_stl' in recent_5.columns else 0
                         avg_blk = recent_5['total_blk'].mean() if 'total_blk' in recent_5.columns else 0
+                        avg_mins = recent_5['total_minutes'].mean() if 'total_minutes' in recent_5.columns else 25
 
                         # Matchup indicator
                         matchup_info = ""
                         if matchup_history and matchup_history.get('n_games', 0) >= 2:
                             matchup_info = f"({matchup_history['n_games']}g vs {opponent_name})"
 
-                        predictions.append({
+                        # Get minutes multiplier for this player
+                        mins_mult = minutes_multipliers.get(player, 1.0)
+
+                        # Base prediction
+                        base_pred = {
                             'Player': player,
                             'Team': team_name,
                             'Proj PTS': pred.get('total_pts', 0),
@@ -4454,16 +4594,27 @@ def predictive_model_page():
                             'TS%': pred.get('ts_pct', 0) * 100,
                             'TOV%': pred.get('tov_rate', 0) * 100,
                             'Game Score': pred.get('game_score', 0),
-                            'Matchup': matchup_info
-                        })
+                            'Matchup': matchup_info,
+                            'Base MIN': avg_mins
+                        }
+
+                        # Apply minutes boost if player will get more minutes
+                        if mins_mult > 1.0:
+                            adjusted = apply_minutes_boost_to_prediction(base_pred, mins_mult, avg_mins)
+                            predictions.append(adjusted)
+                        else:
+                            base_pred['Proj MIN'] = avg_mins
+                            base_pred['MIN Boost'] = "-"
+                            predictions.append(base_pred)
+
             return pd.DataFrame(predictions)
 
-        with st.spinner("Generating opponent-adjusted predictions..."):
+        with st.spinner("Generating opponent-adjusted predictions with minutes redistribution..."):
             your_predictions = predict_lineup_with_context(
-                your_lineup, your_team, opp_def_metrics, is_home
+                your_lineup, your_team, opp_def_metrics, is_home, your_minutes_multipliers
             )
             opp_predictions = predict_lineup_with_context(
-                opp_lineup, opponent_team, your_def_metrics, not is_home
+                opp_lineup, opponent_team, your_def_metrics, not is_home, opp_minutes_multipliers
             )
 
         # Run Monte Carlo simulation (Step 4)
