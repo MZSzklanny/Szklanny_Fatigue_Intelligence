@@ -2572,7 +2572,7 @@ def sprs_page():
             )
             # Age × B2B interaction - older players hurt more by B2B
             games['age_b2b_interact'] = games.apply(
-                lambda x: max(0, x['age'] - 28) * x['is_b2b'].astype(float), axis=1
+                lambda x: max(0, x['age'] - 28) * float(x['is_b2b']), axis=1
             )
             # Age × rest interaction - older players need more recovery
             games['age_rest_interact'] = games.apply(
