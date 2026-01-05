@@ -1,0 +1,24 @@
+# Data files (too large for GitHub)
+*.xlsx
+*.parquet
+*.csv
+*.pth
+*.pkl
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Temp files
+*.tmp
+*.log
