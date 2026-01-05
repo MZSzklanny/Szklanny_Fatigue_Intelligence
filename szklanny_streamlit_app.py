@@ -1160,13 +1160,14 @@ def build_fatigue_regression_predictor(metrics_data, predict_rolling=True):
 
     # Enhanced feature set - prioritize rolling averages over single-game data
     # Key insight: 5-game averages are more predictive than last game (less noise)
+    # Note: Removed slfi_last1 (single game) as it was dominating importance
+    # The momentum feature already captures last-game info relative to trend
     feature_cols = [
         'slfi_avg_last5',       # PRIMARY: 5-game trend (most stable)
         'slfi_avg_last3',       # Recent 3-game trend
         'slfi_avg_last10',      # Long-term baseline
         'slfi_momentum',        # Trend direction (5g avg - last game)
         'slfi_trend',           # Short vs long trend (3g - 10g)
-        'slfi_last1',           # Single game (lower weight naturally)
         'minutes_avg_last5',    # Workload
         'age',                  # Base physiological factor
         'age_load',             # Age-adjusted workload
@@ -1249,7 +1250,6 @@ def build_fatigue_regression_predictor(metrics_data, predict_rolling=True):
         'Avg SPM (10g)',        # Long-term baseline
         'SPM Momentum',         # Trend direction
         'SPM Trend (3g-10g)',   # Short vs long
-        'Last SPM',             # Single game
         'Avg Minutes (5g)',
         'Age',
         'Age-Adjusted Load',
@@ -1284,14 +1284,13 @@ def build_rf_regression_predictor(metrics_data):
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
-    # Feature set - prioritize rolling averages
+    # Feature set - prioritize rolling averages (removed slfi_last1 - was dominating)
     feature_cols = [
         'slfi_avg_last5',       # PRIMARY: 5-game trend (most stable)
         'slfi_avg_last3',       # Recent 3-game trend
         'slfi_avg_last10',      # Long-term baseline
         'slfi_momentum',        # Trend direction (5g avg - last game)
         'slfi_trend',           # Short vs long trend (3g - 10g)
-        'slfi_last1',           # Single game (lower weight naturally)
         'minutes_avg_last5',    # Raw workload
         'age',                  # Base physiological factor
         'age_load',             # Age-adjusted workload
@@ -1351,7 +1350,7 @@ def build_rf_regression_predictor(metrics_data):
         'model_type': 'RandomForest'
     }
 
-    # Feature importance (from RF) - matches 12-feature set
+    # Feature importance (from RF) - matches 11-feature set (no Last SPM)
     importance = pd.DataFrame({
         'Feature': [
             'Avg SPM (5g)',         # Primary trend
@@ -1359,7 +1358,6 @@ def build_rf_regression_predictor(metrics_data):
             'Avg SPM (10g)',        # Long-term baseline
             'SPM Momentum',         # Trend direction
             'SPM Trend (3g-10g)',   # Short vs long
-            'Last SPM',             # Single game
             'Avg Minutes (5g)',
             'Age',
             'Age-Adjusted Load',
