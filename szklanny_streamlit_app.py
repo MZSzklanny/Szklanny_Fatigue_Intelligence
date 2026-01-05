@@ -2515,10 +2515,10 @@ def sprs_page():
             # Sort for rolling calculations
             games = games.sort_values(['player', 'game_date']).reset_index(drop=True)
 
-            # TARGET: 5-game rolling average Q4 drop (much more stable than single game)
-            # This smooths out single-game noise and captures true fatigue patterns
+            # TARGET: 7-game rolling average Q4 drop (more stable, reduces noise)
+            # Larger window captures true fatigue patterns better
             games['fg_change'] = games.groupby('player')['fg_change_raw'].transform(
-                lambda x: x.rolling(5, min_periods=3).mean()
+                lambda x: x.rolling(7, min_periods=4).mean()
             )
 
             # Add age
@@ -2579,15 +2579,14 @@ def sprs_page():
                 lambda x: max(0, x['age'] - 28) * max(0, 2 - x['days_rest']), axis=1
             )
 
+            # PRUNED feature set - removed redundant/correlated features
+            # Key predictors only to avoid overfitting
             feature_cols = [
                 'minutes_norm',       # This game's minutes
                 'workload_5g',        # Recent workload (5-game avg)
                 'is_b2b_num',         # Back-to-back
                 'rest_factor',        # Days rest
-                'cumulative_load',    # Consecutive high-minute games
-                'age_penalty',        # Age × workload interaction
-                'age_b2b_interact',   # Age × B2B interaction
-                'age_rest_interact',  # Age × rest interaction
+                'age_penalty',        # Age × workload (main age effect)
             ]
 
             # Clean data
@@ -2608,16 +2607,15 @@ def sprs_page():
                 X_train_scaled = scaler.fit_transform(X_train)
                 X_test_scaled = scaler.transform(X_test)
 
-                # Gradient Boosting with tuned hyperparameters
-                # max_features='sqrt' reduces overfitting, allows weaker features to contribute
-                # min_samples_leaf=10 prevents splitting on noise
+                # Gradient Boosting with STRONG regularization to prevent overfitting
+                # Key: shallow trees + high min_samples_leaf + low learning rate
                 model = GradientBoostingRegressor(
-                    n_estimators=150,
-                    max_depth=4,
-                    learning_rate=0.08,
-                    min_samples_leaf=10,    # Prevent overfitting
+                    n_estimators=100,
+                    max_depth=2,             # Very shallow - prevents overfitting
+                    learning_rate=0.05,      # Low learning rate
+                    min_samples_leaf=20,     # High - prevents splits on noise
                     max_features='sqrt',     # Feature selection per split
-                    subsample=0.8,
+                    subsample=0.7,           # More aggressive subsampling
                     random_state=42
                 )
                 model.fit(X_train_scaled, y_train)
@@ -2631,10 +2629,9 @@ def sprs_page():
                 raw_pred = model.predict(X_all_scaled)
                 model_df['fatigue_risk'] = (pd.Series(raw_pred).rank(pct=True) * 100).values
 
-                # Learned feature importance (with age interactions)
+                # Learned feature importance (pruned set)
                 learned_weights = dict(zip(
-                    ['Minutes', 'Workload (5g)', 'B2B', 'Rest', 'Consec. Load',
-                     'Age×Load', 'Age×B2B', 'Age×Rest'],
+                    ['Minutes', 'Workload (5g)', 'B2B', 'Rest', 'Age×Load'],
                     model.feature_importances_ * 100
                 ))
 
