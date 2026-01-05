@@ -2552,9 +2552,9 @@ def sprs_page():
             ).shift(1).fillna(0)
 
             # ================================================================
-            # TRAIN GRADIENT BOOSTING MODEL (handles non-linear relationships)
+            # TRAIN RIDGE REGRESSION - better for weak signals, won't overfit
             # ================================================================
-            from sklearn.ensemble import GradientBoostingRegressor
+            from sklearn.linear_model import Ridge
             from sklearn.preprocessing import StandardScaler
             from sklearn.metrics import r2_score
 
@@ -2607,17 +2607,9 @@ def sprs_page():
                 X_train_scaled = scaler.fit_transform(X_train)
                 X_test_scaled = scaler.transform(X_test)
 
-                # Gradient Boosting with STRONG regularization to prevent overfitting
-                # Key: shallow trees + high min_samples_leaf + low learning rate
-                model = GradientBoostingRegressor(
-                    n_estimators=100,
-                    max_depth=2,             # Very shallow - prevents overfitting
-                    learning_rate=0.05,      # Low learning rate
-                    min_samples_leaf=20,     # High - prevents splits on noise
-                    max_features='sqrt',     # Feature selection per split
-                    subsample=0.7,           # More aggressive subsampling
-                    random_state=42
-                )
+                # Ridge Regression - simple, stable, won't overfit weak signals
+                # alpha controls regularization strength
+                model = Ridge(alpha=1.0)
                 model.fit(X_train_scaled, y_train)
 
                 # Predictions
@@ -2629,10 +2621,12 @@ def sprs_page():
                 raw_pred = model.predict(X_all_scaled)
                 model_df['fatigue_risk'] = (pd.Series(raw_pred).rank(pct=True) * 100).values
 
-                # Learned feature importance (pruned set)
+                # Feature weights from Ridge coefficients (absolute value, normalized)
+                coef_abs = np.abs(model.coef_)
+                coef_pct = (coef_abs / coef_abs.sum()) * 100 if coef_abs.sum() > 0 else coef_abs
                 learned_weights = dict(zip(
                     ['Minutes', 'Workload (5g)', 'B2B', 'Rest', 'Age×Load'],
-                    model.feature_importances_ * 100
+                    coef_pct
                 ))
 
                 # Risk categories
