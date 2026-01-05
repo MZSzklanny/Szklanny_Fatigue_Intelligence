@@ -2449,7 +2449,7 @@ def sprs_page():
     # ==========================================================================
     if selected_tab == "Predictive Model":
         st.subheader("Fatigue Risk Prediction Model")
-        st.markdown("Predicts Q4 performance drops based on B2B, age, and MPG.")
+        st.markdown("Predicts **5-game rolling Q4 performance trends** based on workload factors. Uses rolling averages to filter single-game noise.")
 
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import cross_val_score
@@ -2505,11 +2505,21 @@ def sprs_page():
                                on=['game_date', 'player'], how='left')
 
             # FILTER: Only games with meaningful shot attempts (reduces noise dramatically)
-            games = games[(games['early_fga'] >= 5) & (games['q4_fga'] >= 2)]
+            # Increased Q4 FGA requirement to reduce single-game noise
+            games = games[(games['early_fga'] >= 6) & (games['q4_fga'] >= 3)]
             games = games.dropna(subset=['early_fg', 'q4_fg'])
 
-            # Target: Q4 drop from Q1-Q3 baseline (negative = fatigue)
-            games['fg_change'] = games['q4_fg'] - games['early_fg']
+            # Single-game Q4 drop (raw, noisy)
+            games['fg_change_raw'] = games['q4_fg'] - games['early_fg']
+
+            # Sort for rolling calculations
+            games = games.sort_values(['player', 'game_date']).reset_index(drop=True)
+
+            # TARGET: 5-game rolling average Q4 drop (much more stable than single game)
+            # This smooths out single-game noise and captures true fatigue patterns
+            games['fg_change'] = games.groupby('player')['fg_change_raw'].transform(
+                lambda x: x.rolling(5, min_periods=3).mean()
+            )
 
             # Add age
             if 'age' in model_data.columns:
@@ -2517,9 +2527,6 @@ def sprs_page():
                 games['age'] = games['player'].map(age_map).fillna(27)
             else:
                 games['age'] = 27
-
-            # Sort for rolling calculations
-            games = games.sort_values(['player', 'game_date']).reset_index(drop=True)
 
             # ================================================================
             # ADD WORKLOAD FEATURES (cumulative fatigue matters!)
