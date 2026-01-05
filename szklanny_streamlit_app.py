@@ -1656,7 +1656,7 @@ def cap_lab_page():
             with col_refresh:
                 if st.button("🔄 Refresh", help="Re-fetch salary data from Spotrac"):
                     with st.spinner("Refreshing salary data from Spotrac..."):
-                        scraper = SalaryDataScraper(cache_dir=os.path.join(r"C:\Users\user", "salary_cache"))
+                        scraper = SalaryDataScraper(cache_dir=os.path.join(DATA_DIR, "salary_cache"))
                         df = scraper.scrape_all_teams(delay=0.8)
                         if not df.empty:
                             st.success(f"✅ Refreshed {len(df)} contracts!")
@@ -1749,8 +1749,8 @@ def cap_lab_page():
             st.info("📁 No salary data cached yet. Click below to fetch from Basketball Reference (one-time, ~2 min).")
             st.caption("Data is cached locally and won't need to be fetched again for 7 days.")
             if st.button("Fetch Salary Data", type="primary"):
-                with st.spinner("Scraping salary data from Basketball Reference... This only happens once."):
-                    scraper = SalaryDataScraper(cache_dir=os.path.join(r"C:\Users\user", "salary_cache"))
+                with st.spinner("Loading Salary Data....This only happens once."):
+                    scraper = SalaryDataScraper(cache_dir=os.path.join(DATA_DIR, "salary_cache"))
                     df = scraper.scrape_all_teams()
                     if not df.empty:
                         st.success(f"✅ Loaded {len(df)} contracts! Data cached for 7 days.")
