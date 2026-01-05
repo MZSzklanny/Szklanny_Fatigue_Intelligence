@@ -3499,7 +3499,7 @@ def sprs_page():
                         elif pred_trend < -0.1:
                             factors_negative.append(f"**Downward trend** in performance")
 
-                        if pred_is_b2b:
+                        if pred_b2b:
                             factors_negative.append(f"**Back-to-back game** - fatigue risk elevated")
 
                         if pred_recovery < -0.3:
