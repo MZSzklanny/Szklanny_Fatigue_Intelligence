@@ -396,21 +396,24 @@ def load_combined_quarter_data(file_path="NBA_Quarter_ALL_Combined.xlsx"):
     Load quarter data from a combined flat file (all teams in one sheet).
 
     The file should have a 'dataset' column like 'BOS 2024-25' to identify team/season.
-    Uses Parquet for faster loading if available.
+    Supports both .parquet and .xlsx files.
     """
-    # Try parquet first (5-10x faster than Excel)
-    parquet_path = file_path.replace('.xlsx', '.parquet')
     try:
-        if os.path.exists(parquet_path):
-            # Check if parquet is newer than xlsx
-            if os.path.getmtime(parquet_path) >= os.path.getmtime(file_path):
-                df = pd.read_parquet(parquet_path)
+        # Handle parquet files directly
+        if file_path.endswith('.parquet'):
+            if os.path.exists(file_path):
+                df = pd.read_parquet(file_path)
             else:
-                df = pd.read_excel(file_path)
-                df.to_parquet(parquet_path, index=False)  # Update parquet
+                return {}
         else:
-            df = pd.read_excel(file_path)
-            df.to_parquet(parquet_path, index=False)  # Create parquet for next time
+            # Try parquet first (5-10x faster than Excel)
+            parquet_path = file_path.replace('.xlsx', '.parquet')
+            if os.path.exists(parquet_path):
+                df = pd.read_parquet(parquet_path)
+            elif os.path.exists(file_path):
+                df = pd.read_excel(file_path)
+            else:
+                return {}
     except FileNotFoundError:
         return {}
     except Exception as e:
@@ -1955,8 +1958,17 @@ def sprs_page():
     # ==========================================================================
     with st.spinner('Loading data...'):
         data_dir = DATA_DIR
-        combined_path = os.path.join(data_dir, "NBA_Quarter_ALL_Combined.xlsx")
-        datasets = load_combined_quarter_data(combined_path)
+        # Try parquet first (faster), then xlsx
+        parquet_path = os.path.join(data_dir, "NBA_Quarter_ALL_Combined.parquet")
+        xlsx_path = os.path.join(data_dir, "NBA_Quarter_ALL_Combined.xlsx")
+
+        if os.path.exists(parquet_path):
+            datasets = load_combined_quarter_data(parquet_path)
+        elif os.path.exists(xlsx_path):
+            datasets = load_combined_quarter_data(xlsx_path)
+        else:
+            datasets = {}
+
         if datasets:
             st.sidebar.success(f"Loaded {len(datasets)} team-seasons")
         else:
@@ -1964,7 +1976,7 @@ def sprs_page():
             datasets = {}
 
     # Load injury data (if available)
-    injury_path = os.path.join(r"C:\Users\user", "NBA_Injuries_Combined.xlsx")
+    injury_path = os.path.join(DATA_DIR, "NBA_Injuries_Combined.xlsx")
     injury_lookup = load_injury_data(injury_path)
     if injury_lookup:
         st.sidebar.info(f"Injury data: {len(injury_lookup)} records")
