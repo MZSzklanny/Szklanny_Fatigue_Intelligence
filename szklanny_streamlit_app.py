@@ -2475,21 +2475,36 @@ def sprs_page():
             # ================================================================
             minutes_col = 'minutes' if 'minutes' in model_data.columns else 'total_minutes' if 'total_minutes' in model_data.columns else None
 
-            # Get Q1-Q3 combined performance (baseline)
-            q1_q3 = model_data[model_data['qtr_num'].isin([1, 2, 3])].groupby(['game_date', 'player']).agg({
-                'fgm': 'sum', 'fga': 'sum', 'pts': 'sum'
-            }).reset_index()
+            # Get Q1-Q3 combined performance (baseline) - ALL STATS
+            q1_q3_agg = {'fgm': 'sum', 'fga': 'sum', 'pts': 'sum'}
+            # Add hustle stats if available
+            for col in ['trb', 'ast', 'stl', 'blk', 'tov']:
+                if col in model_data.columns:
+                    q1_q3_agg[col] = 'sum'
+
+            q1_q3 = model_data[model_data['qtr_num'].isin([1, 2, 3])].groupby(['game_date', 'player']).agg(q1_q3_agg).reset_index()
             q1_q3['early_fg'] = np.where(q1_q3['fga'] >= 3, q1_q3['fgm'] / q1_q3['fga'] * 100, np.nan)
             q1_q3['early_pts'] = q1_q3['pts']
             q1_q3['early_fga'] = q1_q3['fga']
+            # Hustle stats per quarter average (divide by 3 quarters)
+            for col in ['trb', 'ast', 'stl', 'blk', 'tov']:
+                if col in q1_q3.columns:
+                    q1_q3[f'early_{col}'] = q1_q3[col] / 3.0  # Per quarter rate
 
-            # Get Q4 performance
-            q4 = model_data[model_data['qtr_num'] == 4].groupby(['game_date', 'player']).agg({
-                'fgm': 'sum', 'fga': 'sum', 'pts': 'sum'
-            }).reset_index()
+            # Get Q4 performance - ALL STATS
+            q4_agg = {'fgm': 'sum', 'fga': 'sum', 'pts': 'sum'}
+            for col in ['trb', 'ast', 'stl', 'blk', 'tov']:
+                if col in model_data.columns:
+                    q4_agg[col] = 'sum'
+
+            q4 = model_data[model_data['qtr_num'] == 4].groupby(['game_date', 'player']).agg(q4_agg).reset_index()
             q4['q4_fg'] = np.where(q4['fga'] >= 2, q4['fgm'] / q4['fga'] * 100, np.nan)
             q4['q4_pts'] = q4['pts']
             q4['q4_fga'] = q4['fga']
+            # Q4 hustle stats (already 1 quarter)
+            for col in ['trb', 'ast', 'stl', 'blk', 'tov']:
+                if col in q4.columns:
+                    q4[f'q4_{col}'] = q4[col]
 
             # Get game-level aggregates
             agg_dict = {'is_b2b': 'first', 'fgm': 'sum', 'fga': 'sum'}
@@ -2502,11 +2517,18 @@ def sprs_page():
             else:
                 games['game_minutes'] = 30
 
+            # Build merge columns list dynamically
+            q1_q3_merge_cols = ['game_date', 'player', 'early_fg', 'early_pts', 'early_fga']
+            q4_merge_cols = ['game_date', 'player', 'q4_fg', 'q4_pts', 'q4_fga']
+            for col in ['trb', 'ast', 'stl', 'blk', 'tov']:
+                if f'early_{col}' in q1_q3.columns:
+                    q1_q3_merge_cols.append(f'early_{col}')
+                if f'q4_{col}' in q4.columns:
+                    q4_merge_cols.append(f'q4_{col}')
+
             # Merge performance data
-            games = games.merge(q1_q3[['game_date', 'player', 'early_fg', 'early_pts', 'early_fga']],
-                               on=['game_date', 'player'], how='left')
-            games = games.merge(q4[['game_date', 'player', 'q4_fg', 'q4_pts', 'q4_fga']],
-                               on=['game_date', 'player'], how='left')
+            games = games.merge(q1_q3[q1_q3_merge_cols], on=['game_date', 'player'], how='left')
+            games = games.merge(q4[q4_merge_cols], on=['game_date', 'player'], how='left')
 
             # FILTER: Only games with meaningful shot attempts (reduces noise dramatically)
             # Increased Q4 FGA requirement to reduce single-game noise
@@ -2515,6 +2537,11 @@ def sprs_page():
 
             # Single-game Q4 drop (raw, noisy)
             games['fg_change_raw'] = games['q4_fg'] - games['early_fg']
+
+            # Compute deltas for ALL hustle stats (Q4 - Q1-3 avg per quarter)
+            for col in ['trb', 'ast', 'stl', 'blk', 'tov']:
+                if f'early_{col}' in games.columns and f'q4_{col}' in games.columns:
+                    games[f'{col}_change'] = games[f'q4_{col}'] - games[f'early_{col}']
 
             # Sort for rolling calculations
             games = games.sort_values(['player', 'game_date']).reset_index(drop=True)
@@ -2670,6 +2697,56 @@ def sprs_page():
                              color_discrete_sequence=['#10B981', '#F59E0B', '#EF4444', '#7C3AED'])
                 fig2.update_layout(**get_chart_layout(), height=350)
                 st.plotly_chart(fig2, use_container_width=True)
+
+                # ================================================================
+                # Q4 STAT DELTAS - All hustle stats
+                # ================================================================
+                st.markdown("### 📉 Q4 Performance Drop by Stat")
+                st.markdown("*Average change from Q1-3 per-quarter rate to Q4 (negative = decline)*")
+
+                # Compute average deltas
+                stat_deltas = {'Stat': [], 'Avg Q4 Delta': [], 'Direction': []}
+
+                # FG%
+                if 'fg_change_raw' in games.columns:
+                    fg_delta = games['fg_change_raw'].mean()
+                    stat_deltas['Stat'].append('FG%')
+                    stat_deltas['Avg Q4 Delta'].append(fg_delta)
+                    stat_deltas['Direction'].append('⬇️ Drop' if fg_delta < 0 else '⬆️ Rise')
+
+                # Hustle stats
+                stat_labels = {'trb': 'Rebounds', 'ast': 'Assists', 'stl': 'Steals', 'blk': 'Blocks', 'tov': 'Turnovers'}
+                for col, label in stat_labels.items():
+                    if f'{col}_change' in games.columns:
+                        delta = games[f'{col}_change'].mean()
+                        stat_deltas['Stat'].append(label)
+                        stat_deltas['Avg Q4 Delta'].append(delta)
+                        # For turnovers, increase is bad
+                        if col == 'tov':
+                            stat_deltas['Direction'].append('⬆️ Bad' if delta > 0 else '⬇️ Good')
+                        else:
+                            stat_deltas['Direction'].append('⬇️ Drop' if delta < 0 else '⬆️ Rise')
+
+                if stat_deltas['Stat']:
+                    delta_df = pd.DataFrame(stat_deltas)
+                    # Color based on positive/negative
+                    delta_df['Color'] = delta_df['Avg Q4 Delta'].apply(lambda x: 'red' if x < 0 else 'green')
+
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        fig3 = px.bar(delta_df, x='Stat', y='Avg Q4 Delta',
+                                     color='Avg Q4 Delta',
+                                     color_continuous_scale=['#EF4444', '#F59E0B', '#10B981'],
+                                     title='Average Q4 Change by Stat (per quarter rate)')
+                        fig3.update_layout(**get_chart_layout(), height=350)
+                        fig3.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.5)
+                        st.plotly_chart(fig3, use_container_width=True)
+
+                    with col2:
+                        st.markdown("**Summary Table**")
+                        display_df = delta_df[['Stat', 'Avg Q4 Delta', 'Direction']].copy()
+                        display_df['Avg Q4 Delta'] = display_df['Avg Q4 Delta'].apply(lambda x: f"{x:+.2f}")
+                        st.dataframe(display_df, hide_index=True, use_container_width=True)
 
             # Interactive Prediction Section
             st.markdown("---")
