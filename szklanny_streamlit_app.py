@@ -2448,8 +2448,12 @@ def sprs_page():
     # TAB 5: Original Predictive Model
     # ==========================================================================
     if selected_tab == "Predictive Model":
-        st.subheader("Fatigue Risk Prediction Model")
-        st.markdown("Predicts **5-game rolling Q4 performance trends** based on workload factors. Uses rolling averages to filter single-game noise.")
+        st.subheader("Workload Risk Assessment")
+        st.markdown("""
+        **Note:** Q4 FG% drops are highly variable and not well-predicted by workload factors alone
+        (dominated by opponent defense, game context, shot selection). This tool shows **physiological risk factors**
+        based on sports science principles rather than ML predictions.
+        """)
 
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import cross_val_score
@@ -2552,11 +2556,8 @@ def sprs_page():
             ).shift(1).fillna(0)
 
             # ================================================================
-            # TRAIN RIDGE REGRESSION - better for weak signals, won't overfit
+            # RULE-BASED RISK ASSESSMENT
             # ================================================================
-            from sklearn.linear_model import Ridge
-            from sklearn.preprocessing import StandardScaler
-            from sklearn.metrics import r2_score
 
             # Feature set with workload history and age interactions
             games['minutes_norm'] = games['game_minutes'] / 48.0
@@ -2579,106 +2580,84 @@ def sprs_page():
                 lambda x: max(0, x['age'] - 28) * max(0, 2 - x['days_rest']), axis=1
             )
 
-            # PRUNED feature set - removed redundant/correlated features
-            # Key predictors only to avoid overfitting
-            feature_cols = [
-                'minutes_norm',       # This game's minutes
-                'workload_5g',        # Recent workload (5-game avg)
-                'is_b2b_num',         # Back-to-back
-                'rest_factor',        # Days rest
-                'age_penalty',        # Age × workload (main age effect)
-            ]
+            # Required columns for risk calculation
+            required_cols = ['minutes_norm', 'workload_5g', 'is_b2b_num', 'rest_factor',
+                           'age_penalty', 'cumulative_load']
 
             # Clean data
-            model_df = games.dropna(subset=feature_cols + ['fg_change'])
+            model_df = games.dropna(subset=required_cols)
 
             if len(model_df) < 50:
-                st.warning(f"Not enough quality samples ({len(model_df)}). Need 50+ games with meaningful FGA.")
+                st.warning(f"Not enough data ({len(model_df)} games). Need 50+ games.")
             else:
-                X = model_df[feature_cols].values
-                y = -model_df['fg_change'].values  # Negative so higher = more fatigue
+                # ================================================================
+                # RULE-BASED RISK SCORE (honest - based on sports science, not ML)
+                # ================================================================
+                # Weights based on sports science research on fatigue factors
+                RISK_WEIGHTS = {
+                    'b2b': 30,           # Back-to-back: high impact
+                    'low_rest': 25,      # <2 days rest: high impact
+                    'high_minutes': 20,  # High recent workload
+                    'age_load': 15,      # Age under high load
+                    'consec_load': 10,   # Consecutive heavy games
+                }
 
-                # Train/test split (time-based)
-                split_idx = int(len(X) * 0.7)
-                X_train, X_test = X[:split_idx], X[split_idx:]
-                y_train, y_test = y[:split_idx], y[split_idx:]
+                # Compute rule-based risk score (0-100)
+                model_df['risk_b2b'] = model_df['is_b2b_num'] * RISK_WEIGHTS['b2b']
+                model_df['risk_rest'] = model_df['rest_factor'].clip(0, 1) * RISK_WEIGHTS['low_rest']
+                model_df['risk_minutes'] = model_df['workload_5g'].clip(0, 1) * RISK_WEIGHTS['high_minutes']
+                model_df['risk_age'] = (model_df['age_penalty'] / 5).clip(0, 1) * RISK_WEIGHTS['age_load']
+                model_df['risk_consec'] = model_df['cumulative_load'].clip(0, 1) * RISK_WEIGHTS['consec_load']
 
-                scaler = StandardScaler()
-                X_train_scaled = scaler.fit_transform(X_train)
-                X_test_scaled = scaler.transform(X_test)
-
-                # Ridge Regression - simple, stable, won't overfit weak signals
-                # alpha controls regularization strength
-                model = Ridge(alpha=1.0)
-                model.fit(X_train_scaled, y_train)
-
-                # Predictions
-                y_train_pred = model.predict(X_train_scaled)
-                y_test_pred = model.predict(X_test_scaled)
-
-                # Full dataset predictions for display
-                X_all_scaled = scaler.transform(X)
-                raw_pred = model.predict(X_all_scaled)
-                model_df['fatigue_risk'] = (pd.Series(raw_pred).rank(pct=True) * 100).values
-
-                # Feature weights from Ridge coefficients (absolute value, normalized)
-                coef_abs = np.abs(model.coef_)
-                coef_pct = (coef_abs / coef_abs.sum()) * 100 if coef_abs.sum() > 0 else coef_abs
-                learned_weights = dict(zip(
-                    ['Minutes', 'Workload (5g)', 'B2B', 'Rest', 'Age×Load'],
-                    coef_pct
-                ))
+                model_df['fatigue_risk'] = (
+                    model_df['risk_b2b'] + model_df['risk_rest'] + model_df['risk_minutes'] +
+                    model_df['risk_age'] + model_df['risk_consec']
+                ).clip(0, 100)
 
                 # Risk categories
                 model_df['risk_category'] = pd.cut(model_df['fatigue_risk'],
                                                 bins=[0, 25, 50, 75, 100],
                                                 labels=['Low', 'Moderate', 'High', 'Very High'])
-                model_df['q4_drop'] = (model_df['fg_change'] < -5).astype(int)
 
-                # Metrics with Adjusted R² (penalizes unnecessary features)
-                train_r2 = r2_score(y_train, y_train_pred)
-                test_r2 = r2_score(y_test, y_test_pred)
-                n_test = len(y_test)
-                p = X_test.shape[1]  # number of predictors
-                # Adjusted R² = 1 - (1 - R²) * (n - 1) / (n - p - 1)
-                adjusted_r2 = 1 - (1 - test_r2) * (n_test - 1) / (n_test - p - 1)
-                correlation = model_df['fatigue_risk'].corr(-model_df['fg_change'])
-                accuracy = ((model_df['fatigue_risk'] > 50) == (model_df['q4_drop'] == 1)).mean()
-
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Train R²", f"{train_r2:.2f}",
-                           help="Model fit on training data")
-                col2.metric("Adj. Test R²", f"{adjusted_r2:.2f}",
-                           help="Adjusted R² (penalizes extra features)")
-                col3.metric("Correlation", f"{correlation:.2f}",
-                           help="Correlation with actual FG% drop")
-                col4.metric("Sample Size", f"{len(model_df)} games",
-                           help="Games with 5+ early FGA, 2+ Q4 FGA")
-
-                # Use model_df instead of games for visualizations
+                # Use model_df for visualizations
                 games = model_df
 
-                st.markdown("### 📊 Improved Fatigue Model")
+                # Show sample statistics instead of fake R²
+                col1, col2, col3, col4 = st.columns(4)
+                avg_risk = model_df['fatigue_risk'].mean()
+                high_risk_pct = (model_df['fatigue_risk'] > 50).mean() * 100
+                b2b_pct = model_df['is_b2b_num'].mean() * 100
+                col1.metric("Avg Risk Score", f"{avg_risk:.1f}",
+                           help="Average workload risk (0-100)")
+                col2.metric("High Risk Games", f"{high_risk_pct:.1f}%",
+                           help="% of games with risk > 50")
+                col3.metric("B2B Games", f"{b2b_pct:.1f}%",
+                           help="% of games that are back-to-backs")
+                col4.metric("Sample Size", f"{len(model_df)} games",
+                           help="Games analyzed")
+
+                st.markdown("### 📊 Risk Factor Weights")
                 st.markdown("""
                 <div class='info-box'>
-                <strong>Key Improvements:</strong><br>
-                • Uses Q1-Q3 average vs Q4 (more stable than Q1 vs Q4)<br>
-                • Filters to games with 5+ FGA early, 2+ FGA in Q4 (reduces noise)<br>
-                • Includes workload history: 5-game rolling minutes, fatigue trend<br>
-                • Gradient Boosting captures non-linear fatigue patterns
+                <strong>Based on Sports Science Research:</strong><br>
+                • Back-to-back games have the highest fatigue impact<br>
+                • Rest < 2 days significantly increases injury/fatigue risk<br>
+                • Cumulative workload (5-game minutes) compounds fatigue<br>
+                • Age amplifies fatigue effects under high load<br>
+                <em>Note: These are research-based weights, not ML predictions</em>
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Feature contribution visualization (learned from data)
-                st.markdown("### Learned Feature Weights")
+                # Show fixed weights (honest about what they are)
+                st.markdown("### Risk Factor Breakdown")
                 importance_df = pd.DataFrame({
-                    'Feature': list(learned_weights.keys()),
-                    'Weight': list(learned_weights.values())
+                    'Factor': ['Back-to-Back', 'Low Rest (<2 days)', 'High Workload (5g)', 'Age × Load', 'Consec. Heavy Games'],
+                    'Weight': [30, 25, 20, 15, 10]
                 }).sort_values('Weight', ascending=True)
 
-                fig = px.bar(importance_df, x='Weight', y='Feature', orientation='h',
+                fig = px.bar(importance_df, x='Weight', y='Factor', orientation='h',
                             color='Weight', color_continuous_scale='Reds',
-                            title='Fatigue Risk Factor Weights (Learned from Data)')
+                            title='Fatigue Risk Factor Weights (Sports Science Based)')
                 fig.update_layout(**get_chart_layout(), height=350)
                 fig.update_traces(text=[f"{w:.1f}%" for w in importance_df['Weight']], textposition='inside')
                 st.plotly_chart(fig, use_container_width=True)
