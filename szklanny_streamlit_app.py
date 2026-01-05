@@ -2576,11 +2576,11 @@ def sprs_page():
             games['days_rest'] = games.groupby('player')['game_date'].diff().dt.days.fillna(3)
             games['days_rest'] = games['days_rest'].clip(0, 7)  # Cap at 7
 
-            # Consecutive high-minute games
+            # Consecutive high-minute games (shift must be inside transform for per-player)
             games['high_minutes'] = (games['game_minutes'] > 35).astype(int)
             games['consec_high_min'] = games.groupby('player')['high_minutes'].transform(
-                lambda x: x.rolling(3, min_periods=1).sum()
-            ).shift(1).fillna(0)
+                lambda x: x.rolling(3, min_periods=1).sum().shift(1).fillna(0)
+            )
 
             # ================================================================
             # RULE-BASED RISK ASSESSMENT
