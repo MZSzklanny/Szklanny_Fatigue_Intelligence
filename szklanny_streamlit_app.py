@@ -33,6 +33,24 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 # =============================================================================
+# DATA DIRECTORY HELPER (works on local and Streamlit Cloud)
+# =============================================================================
+def get_data_dir():
+    """Get the data directory - works on local and Streamlit Cloud."""
+    # Check current directory first (Streamlit Cloud)
+    if os.path.exists("NBA_Quarter_ALL_Combined.parquet") or os.path.exists("NBA_Quarter_ALL_Combined.xlsx"):
+        return "."
+    # Check local Windows path
+    if os.path.exists(r"C:\Users\user\NBA_Quarter_ALL_Combined.parquet"):
+        return r"C:\Users\user"
+    if os.path.exists(r"C:\Users\user\NBA_Quarter_ALL_Combined.xlsx"):
+        return r"C:\Users\user"
+    # Default to current directory
+    return "."
+
+DATA_DIR = get_data_dir()
+
+# =============================================================================
 # LEAGUE BENCHMARKS (Research-based reference values)
 # =============================================================================
 LEAGUE_BENCHMARKS = {
@@ -1936,7 +1954,7 @@ def sprs_page():
     # DATA LOADING
     # ==========================================================================
     with st.spinner('Loading data...'):
-        data_dir = r"C:\Users\user"
+        data_dir = DATA_DIR
         combined_path = os.path.join(data_dir, "NBA_Quarter_ALL_Combined.xlsx")
         datasets = load_combined_quarter_data(combined_path)
         if datasets:
