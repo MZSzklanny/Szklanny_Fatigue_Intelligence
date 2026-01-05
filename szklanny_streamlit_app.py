@@ -2559,13 +2559,14 @@ def sprs_page():
             from sklearn.metrics import r2_score
 
             # Feature set with workload history
-            games['minutes_norm'] = games['game_minutes'] / 48.0
-            games['age_factor'] = (games['age'] - 25) / 10.0
-            games['is_b2b_num'] = games['is_b2b'].astype(float)
-            games['workload_5g'] = games['rolling_minutes_5g'] / 40.0  # Normalize
-            games['fatigue_trend'] = games['rolling_fg_change_5g'] / 10.0  # Recent pattern
-            games['rest_factor'] = (3 - games['days_rest']) / 3.0  # Less rest = higher
-            games['cumulative_load'] = games['consec_high_min'] / 3.0
+            # WEIGHTS: Emphasize workload factors, reduce age/trend influence
+            games['minutes_norm'] = (games['game_minutes'] / 48.0) * 1.5  # Amplified
+            games['age_factor'] = (games['age'] - 25) / 10.0 * 0.4  # Reduced weight
+            games['is_b2b_num'] = games['is_b2b'].astype(float) * 1.2  # Slight boost
+            games['workload_5g'] = (games['rolling_minutes_5g'] / 40.0) * 1.5  # Amplified
+            games['fatigue_trend'] = (games['rolling_fg_change_5g'] / 10.0) * 0.6  # Reduced to 60%
+            games['rest_factor'] = (3 - games['days_rest']) / 3.0 * 1.3  # Amplified
+            games['cumulative_load'] = (games['consec_high_min'] / 3.0) * 1.5  # Amplified
 
             feature_cols = [
                 'minutes_norm',      # This game's minutes
