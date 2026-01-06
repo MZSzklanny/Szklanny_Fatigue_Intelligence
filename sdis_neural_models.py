@@ -58,7 +58,7 @@ class PlayerSequenceDataset(Dataset):
             if is_quarter_level:
                 target_cols = ['pts', 'fga', 'fgm', 'tov', 'pf', 'minutes']
             else:
-                target_cols = ['total_pts', 'total_fga', 'ts_pct', 'tov_rate', 'game_score']
+                target_cols = ['total_pts', 'total_fga', 'ts_pct', 'tov_rate', 'game_score', 'spm']
 
         self.target_cols = target_cols
         self.df = df.copy()
@@ -149,8 +149,47 @@ class PlayerSequenceDataset(Dataset):
         # Win indicator
         game_agg['is_win'] = (game_agg['win_loss'] == 'W').astype(int)
 
+        # Calculate SPM (Szklanny Performance Metric) - Q1-3 to Q4 resilience
+        spm_df = self._calculate_spm(df)
+        if spm_df is not None and len(spm_df) > 0:
+            game_agg = game_agg.merge(
+                spm_df[['player', 'game_id', 'spm', 'q4_pts_change', 'q4_fg_change']],
+                on=['player', 'game_id'], how='left'
+            )
+            game_agg['spm'] = game_agg['spm'].fillna(0)
+            game_agg['q4_pts_change'] = game_agg['q4_pts_change'].fillna(0)
+            game_agg['q4_fg_change'] = game_agg['q4_fg_change'].fillna(0)
+        else:
+            game_agg['spm'] = 0
+            game_agg['q4_pts_change'] = 0
+            game_agg['q4_fg_change'] = 0
+
         self.game_df = game_agg
         self.quarter_df = df
+
+    def _calculate_spm(self, df):
+        """Calculate SPM (late-game resilience) for each player-game."""
+        try:
+            if 'qtr_num' not in df.columns:
+                return None
+            q13 = df[df['qtr_num'].isin([1,2,3])].groupby(['player','game_id']).agg({
+                'pts':'mean','fgm':'sum','fga':'sum','tov':'mean','blk':'mean','stl':'mean'
+            }).reset_index()
+            q13.columns = ['player','game_id','q13_pts','q13_fgm','q13_fga','q13_tov','q13_blk','q13_stl']
+            q4 = df[df['qtr_num']==4].groupby(['player','game_id']).agg({
+                'pts':'sum','fgm':'sum','fga':'sum','tov':'sum','blk':'sum','stl':'sum'
+            }).reset_index()
+            q4.columns = ['player','game_id','q4_pts','q4_fgm','q4_fga','q4_tov','q4_blk','q4_stl']
+            spm_data = q13.merge(q4, on=['player','game_id'], how='inner')
+            spm_data['q4_fg_pct'] = np.where(spm_data['q4_fga']>0, spm_data['q4_fgm']/spm_data['q4_fga'], 0)
+            spm_data['q13_fg_pct'] = np.where(spm_data['q13_fga']>0, spm_data['q13_fgm']/spm_data['q13_fga'], 0)
+            spm_data['q4_fg_change'] = spm_data['q4_fg_pct'] - spm_data['q13_fg_pct']
+            spm_data['q4_pts_change'] = spm_data['q4_pts'] - spm_data['q13_pts']
+            spm_data['tov_resil'] = spm_data['q13_tov'] - spm_data['q4_tov']
+            spm_data['spm'] = spm_data['q4_fg_change']*15 + spm_data['q4_pts_change']*0.3 + spm_data['tov_resil']*2
+            return spm_data
+        except Exception as e:
+            return None
 
     def _create_sequences(self):
         """Create sequences for each prediction point."""
@@ -169,7 +208,7 @@ class PlayerSequenceDataset(Dataset):
         self.seq_features = ['total_pts', 'total_trb', 'total_ast', 'total_stl',
                             'total_blk', 'total_tov', 'total_pf', 'total_fgm',
                             'total_fga', 'total_minutes', 'fg_pct', 'ts_pct',
-                            'game_score', 'usage_proxy', 'is_win']
+                            'game_score', 'usage_proxy', 'is_win', 'spm', 'q4_pts_change']
 
         # Static features (for current game context)
         static_features = ['is_b2b', 'days_rest', 'age']
@@ -950,7 +989,7 @@ def build_and_train_player_model(quarter_df, game_level=True, use_enhanced=True)
 
     # Define targets
     if game_level:
-        target_cols = ['total_pts', 'total_fga', 'ts_pct', 'tov_rate', 'game_score']
+        target_cols = ['total_pts', 'total_fga', 'ts_pct', 'tov_rate', 'game_score', 'spm']
     else:
         target_cols = ['pts', 'fga', 'fg_pct', 'tov', 'minutes']
 
