@@ -265,14 +265,22 @@ class PlayerSequenceDataset(Dataset):
 class SequenceEncoder(nn.Module):
     """
     Encodes a sequence of previous games/quarters using LSTM or Transformer.
+
+    ENHANCED VERSION (v2):
+    - Bidirectional LSTM for better context capture
+    - Layer normalization for training stability
+    - Increased hidden_dim (128) for more expressive power
+    - Support for MC Dropout during inference
     """
 
-    def __init__(self, input_dim, hidden_dim=64, num_layers=2,
-                 encoder_type='lstm', dropout=0.2):
+    def __init__(self, input_dim, hidden_dim=128, num_layers=2,
+                 encoder_type='lstm', dropout=0.2, bidirectional=True):
         super().__init__()
 
         self.encoder_type = encoder_type
         self.hidden_dim = hidden_dim
+        self.bidirectional = bidirectional if encoder_type in ['lstm', 'gru'] else False
+        self.dropout = dropout
 
         if encoder_type == 'lstm':
             self.encoder = nn.LSTM(
@@ -281,9 +289,12 @@ class SequenceEncoder(nn.Module):
                 num_layers=num_layers,
                 batch_first=True,
                 dropout=dropout if num_layers > 1 else 0,
-                bidirectional=False
+                bidirectional=self.bidirectional
             )
-            self.output_dim = hidden_dim
+            # Output dim doubles if bidirectional
+            self.output_dim = hidden_dim * 2 if self.bidirectional else hidden_dim
+            # Layer normalization for stability
+            self.layer_norm = nn.LayerNorm(self.output_dim)
 
         elif encoder_type == 'transformer':
             encoder_layer = nn.TransformerEncoderLayer(
@@ -295,6 +306,7 @@ class SequenceEncoder(nn.Module):
             )
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
             self.output_dim = input_dim
+            self.layer_norm = nn.LayerNorm(self.output_dim)
 
         elif encoder_type == 'gru':
             self.encoder = nn.GRU(
@@ -302,39 +314,113 @@ class SequenceEncoder(nn.Module):
                 hidden_size=hidden_dim,
                 num_layers=num_layers,
                 batch_first=True,
-                dropout=dropout if num_layers > 1 else 0
+                dropout=dropout if num_layers > 1 else 0,
+                bidirectional=self.bidirectional
             )
-            self.output_dim = hidden_dim
+            self.output_dim = hidden_dim * 2 if self.bidirectional else hidden_dim
+            self.layer_norm = nn.LayerNorm(self.output_dim)
 
-    def forward(self, x):
+        # Dropout layer for MC Dropout during inference
+        self.output_dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mc_dropout=False):
         """
         Args:
             x: (batch, seq_len, input_dim)
+            mc_dropout: If True, keep dropout active for MC inference
         Returns:
             (batch, output_dim)
         """
         if self.encoder_type in ['lstm', 'gru']:
             output, _ = self.encoder(x)
-            # Take last timestep
-            return output[:, -1, :]
+            # Take last timestep (for bidirectional, this contains both directions)
+            encoded = output[:, -1, :]
         else:
             # Transformer
             output = self.encoder(x)
             # Mean pool over sequence
-            return output.mean(dim=1)
+            encoded = output.mean(dim=1)
+
+        # Apply layer normalization
+        encoded = self.layer_norm(encoded)
+
+        # Apply dropout (active during training OR when mc_dropout=True)
+        if self.training or mc_dropout:
+            encoded = self.output_dropout(encoded)
+
+        return encoded
 
 
 class TabularMLP(nn.Module):
     """
     MLP for processing static/tabular features.
+
+    ENHANCED VERSION (v2):
+    - Layer normalization option for stability
+    - MC Dropout support for uncertainty estimation
     """
 
-    def __init__(self, input_dim, hidden_dims=[64, 32], dropout=0.2):
+    def __init__(self, input_dim, hidden_dims=[64, 32], dropout=0.2, use_layer_norm=True):
         super().__init__()
+
+        self.dropout = dropout
+        self.use_layer_norm = use_layer_norm
 
         layers = []
         prev_dim = input_dim
 
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            if use_layer_norm:
+                layers.append(nn.LayerNorm(hidden_dim))
+            else:
+                layers.append(nn.BatchNorm1d(hidden_dim))
+            layers.append(nn.Dropout(dropout))
+            prev_dim = hidden_dim
+
+        self.mlp = nn.Sequential(*layers)
+        self.output_dim = hidden_dims[-1]
+
+    def forward(self, x, mc_dropout=False):
+        # For MC dropout, we need to manually handle dropout layers
+        if mc_dropout and not self.training:
+            # Apply layers manually with dropout forced on
+            out = x
+            for layer in self.mlp:
+                if isinstance(layer, nn.Dropout):
+                    out = nn.functional.dropout(out, p=self.dropout, training=True)
+                else:
+                    out = layer(out)
+            return out
+        return self.mlp(x)
+
+
+class LegacySequenceEncoder(nn.Module):
+    """Legacy sequence encoder matching original saved model structure."""
+    def __init__(self, input_dim, hidden_dim=64, num_layers=2, dropout=0.2):
+        super().__init__()
+        self.encoder = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0,
+            bidirectional=False
+        )
+        self.output_dim = hidden_dim
+
+    def forward(self, x):
+        output, _ = self.encoder(x)
+        return output[:, -1, :]
+
+
+class LegacyTabularMLP(nn.Module):
+    """Legacy MLP matching original saved model structure."""
+    def __init__(self, input_dim, hidden_dims=[64, 32], dropout=0.2):
+        super().__init__()
+        layers = []
+        prev_dim = input_dim
         for hidden_dim in hidden_dims:
             layers.extend([
                 nn.Linear(prev_dim, hidden_dim),
@@ -343,7 +429,6 @@ class TabularMLP(nn.Module):
                 nn.Dropout(dropout)
             ])
             prev_dim = hidden_dim
-
         self.mlp = nn.Sequential(*layers)
         self.output_dim = hidden_dims[-1]
 
@@ -351,9 +436,83 @@ class TabularMLP(nn.Module):
         return self.mlp(x)
 
 
+class PlayerPerformanceModelLegacy(nn.Module):
+    """
+    Legacy model architecture for loading pre-trained models.
+    Uses BatchNorm, unidirectional LSTM, simpler fusion.
+    Structure matches original saved state_dict keys.
+    """
+
+    def __init__(self, seq_input_dim, static_input_dim, target_dims,
+                 seq_hidden_dim=64, mlp_hidden_dims=[64, 32],
+                 encoder_type='lstm', dropout=0.2):
+        super().__init__()
+
+        # Legacy sequence encoder (matches state_dict: seq_encoder.encoder.*)
+        self.seq_encoder = LegacySequenceEncoder(
+            input_dim=seq_input_dim,
+            hidden_dim=seq_hidden_dim,
+            num_layers=2,
+            dropout=dropout
+        )
+
+        # Legacy static MLP (matches state_dict: static_mlp.mlp.*)
+        self.static_mlp = LegacyTabularMLP(
+            input_dim=static_input_dim,
+            hidden_dims=mlp_hidden_dims,
+            dropout=dropout
+        )
+
+        # Combined dimension
+        combined_dim = seq_hidden_dim + mlp_hidden_dims[-1]
+
+        # Legacy fusion layer with BatchNorm
+        self.fusion = nn.Sequential(
+            nn.Linear(combined_dim, 64),
+            nn.ReLU(),
+            nn.BatchNorm1d(64),
+            nn.Dropout(dropout)
+        )
+
+        # Multi-task prediction heads (legacy: simpler)
+        self.target_dims = target_dims
+        self.heads = nn.ModuleDict()
+
+        for target_name, dim in target_dims.items():
+            self.heads[target_name] = nn.Sequential(
+                nn.Linear(64, 32),
+                nn.ReLU(),
+                nn.Linear(32, dim)
+            )
+
+    def forward(self, sequence, static, mc_dropout=False):
+        # Encode sequence
+        seq_emb = self.seq_encoder(sequence)
+
+        # Encode static features
+        static_emb = self.static_mlp(static)
+
+        # Combine and fuse
+        combined = torch.cat([seq_emb, static_emb], dim=1)
+        fused = self.fusion(combined)
+
+        # Predict each target
+        outputs = {}
+        for name, head in self.heads.items():
+            outputs[name] = head(fused)
+
+        return outputs
+
+
 class PlayerPerformanceModel(nn.Module):
     """
     Main model for predicting player performance.
+
+    ENHANCED VERSION (v2):
+    - Bidirectional LSTM (128 hidden) for better temporal patterns
+    - Layer normalization throughout for training stability
+    - MC Dropout support for uncertainty-aware predictions
+    - Larger fusion layer (128) for better feature combination
 
     Combines:
     - Sequence encoder (LSTM/Transformer) for historical performance
@@ -362,33 +521,41 @@ class PlayerPerformanceModel(nn.Module):
     """
 
     def __init__(self, seq_input_dim, static_input_dim, target_dims,
-                 seq_hidden_dim=64, mlp_hidden_dims=[64, 32],
-                 encoder_type='lstm', dropout=0.2):
+                 seq_hidden_dim=128, mlp_hidden_dims=[64, 32],
+                 encoder_type='lstm', dropout=0.2, bidirectional=True):
         super().__init__()
 
-        # Sequence encoder
+        self.dropout = dropout
+
+        # Sequence encoder (enhanced with bidirectional + layer norm)
         self.seq_encoder = SequenceEncoder(
             input_dim=seq_input_dim,
             hidden_dim=seq_hidden_dim,
             encoder_type=encoder_type,
-            dropout=dropout
+            dropout=dropout,
+            bidirectional=bidirectional
         )
 
-        # Static feature MLP
+        # Static feature MLP (enhanced with layer norm)
         self.static_mlp = TabularMLP(
             input_dim=static_input_dim,
             hidden_dims=mlp_hidden_dims,
-            dropout=dropout
+            dropout=dropout,
+            use_layer_norm=True
         )
 
-        # Combined dimension
+        # Combined dimension (note: bidirectional doubles seq encoder output)
         combined_dim = self.seq_encoder.output_dim + self.static_mlp.output_dim
 
-        # Fusion layer
+        # Enhanced fusion layer with layer norm (128 units for more capacity)
         self.fusion = nn.Sequential(
-            nn.Linear(combined_dim, 64),
+            nn.Linear(combined_dim, 128),
             nn.ReLU(),
-            nn.BatchNorm1d(64),
+            nn.LayerNorm(128),
+            nn.Dropout(dropout),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.LayerNorm(64),
             nn.Dropout(dropout)
         )
 
@@ -400,26 +567,38 @@ class PlayerPerformanceModel(nn.Module):
             self.heads[target_name] = nn.Sequential(
                 nn.Linear(64, 32),
                 nn.ReLU(),
+                nn.LayerNorm(32),
                 nn.Linear(32, dim)
             )
 
-    def forward(self, sequence, static):
+    def forward(self, sequence, static, mc_dropout=False):
         """
         Args:
             sequence: (batch, seq_len, seq_features)
             static: (batch, static_features)
+            mc_dropout: If True, enable dropout during inference for uncertainty estimation
         Returns:
             dict of predictions for each target
         """
-        # Encode sequence
-        seq_emb = self.seq_encoder(sequence)
+        # Encode sequence (with optional MC dropout)
+        seq_emb = self.seq_encoder(sequence, mc_dropout=mc_dropout)
 
-        # Encode static features
-        static_emb = self.static_mlp(static)
+        # Encode static features (with optional MC dropout)
+        static_emb = self.static_mlp(static, mc_dropout=mc_dropout)
 
         # Combine
         combined = torch.cat([seq_emb, static_emb], dim=1)
-        fused = self.fusion(combined)
+
+        # Apply fusion with MC dropout if requested
+        if mc_dropout and not self.training:
+            fused = combined
+            for layer in self.fusion:
+                if isinstance(layer, nn.Dropout):
+                    fused = nn.functional.dropout(fused, p=self.dropout, training=True)
+                else:
+                    fused = layer(fused)
+        else:
+            fused = self.fusion(combined)
 
         # Predict each target
         outputs = {}
@@ -427,6 +606,41 @@ class PlayerPerformanceModel(nn.Module):
             outputs[name] = head(fused)
 
         return outputs
+
+    def predict_with_uncertainty(self, sequence, static, n_samples=10):
+        """
+        Make predictions with uncertainty estimation using MC Dropout.
+
+        Runs n_samples forward passes with dropout active and returns
+        mean predictions plus standard deviations.
+
+        Args:
+            sequence: (batch, seq_len, seq_features)
+            static: (batch, static_features)
+            n_samples: Number of MC samples (default 10)
+
+        Returns:
+            dict with 'mean' and 'std' for each target
+        """
+        self.eval()  # Ensure eval mode (MC dropout handled separately)
+
+        all_predictions = {name: [] for name in self.target_dims.keys()}
+
+        with torch.no_grad():
+            for _ in range(n_samples):
+                preds = self.forward(sequence, static, mc_dropout=True)
+                for name, pred in preds.items():
+                    all_predictions[name].append(pred.cpu().numpy())
+
+        results = {}
+        for name in self.target_dims.keys():
+            stacked = np.stack(all_predictions[name], axis=0)  # (n_samples, batch, dim)
+            results[name] = {
+                'mean': np.mean(stacked, axis=0),
+                'std': np.std(stacked, axis=0)
+            }
+
+        return results
 
 
 # =============================================================================
@@ -714,19 +928,24 @@ def predict_player_performance(model, player_history_df, static_features,
 # MAIN TRAINING PIPELINE
 # =============================================================================
 
-def build_and_train_player_model(quarter_df, game_level=True):
+def build_and_train_player_model(quarter_df, game_level=True, use_enhanced=True):
     """
     Main function to build and train the player performance model.
 
     Args:
         quarter_df: DataFrame with quarter-level data
         game_level: If True, predict game totals; else quarter-level
+        use_enhanced: If True, use enhanced v2 architecture (bidirectional LSTM, 128 hidden)
 
     Returns:
         Trained model, scalers, history
     """
     print("="*60)
     print("Building Player Performance Model")
+    if use_enhanced:
+        print("Using ENHANCED v2 architecture (bidirectional LSTM, 128 hidden)")
+    else:
+        print("Using legacy architecture (unidirectional LSTM, 64 hidden)")
     print("="*60)
 
     # Define targets
@@ -780,15 +999,30 @@ def build_and_train_player_model(quarter_df, game_level=True):
     # Build model
     target_dims = {name: 1 for name in target_names}
 
-    model = PlayerPerformanceModel(
-        seq_input_dim=seq_input_dim,
-        static_input_dim=static_input_dim,
-        target_dims=target_dims,
-        seq_hidden_dim=64,
-        mlp_hidden_dims=[64, 32],
-        encoder_type='lstm',
-        dropout=0.2
-    )
+    if use_enhanced:
+        # Enhanced v2 architecture for tighter variance
+        model = PlayerPerformanceModel(
+            seq_input_dim=seq_input_dim,
+            static_input_dim=static_input_dim,
+            target_dims=target_dims,
+            seq_hidden_dim=128,  # Increased from 64
+            mlp_hidden_dims=[64, 32],
+            encoder_type='lstm',
+            dropout=0.2,
+            bidirectional=True  # Bidirectional for better context
+        )
+    else:
+        # Legacy architecture
+        model = PlayerPerformanceModel(
+            seq_input_dim=seq_input_dim,
+            static_input_dim=static_input_dim,
+            target_dims=target_dims,
+            seq_hidden_dim=64,
+            mlp_hidden_dims=[64, 32],
+            encoder_type='lstm',
+            dropout=0.2,
+            bidirectional=False
+        )
 
     print(f"\nModel parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -841,11 +1075,16 @@ if __name__ == "__main__":
 
         print(f"Data loaded: {len(df):,} rows")
 
-        model, dataset, history = build_and_train_player_model(df, game_level=True)
+        # Train enhanced v2 model by default
+        use_enhanced = True
+        model, dataset, history = build_and_train_player_model(df, game_level=True, use_enhanced=use_enhanced)
 
         if model and dataset:
-            # Save model
-            model_path = r"C:\Users\user\player_performance_model.pth"
+            # Save model with v2 suffix for enhanced version
+            if use_enhanced:
+                model_path = r"C:\Users\user\player_performance_model_v2.pth"
+            else:
+                model_path = r"C:\Users\user\player_performance_model.pth"
             torch.save(model.state_dict(), model_path)
             print(f"\nModel saved to {model_path}")
 
@@ -855,6 +1094,7 @@ if __name__ == "__main__":
                 'seq_scaler': dataset.seq_scaler,
                 'target_scaler': dataset.target_scaler,
                 'target_cols': dataset.target_cols,
-                'seq_features': dataset.seq_features
+                'seq_features': dataset.seq_features,
+                'use_enhanced': use_enhanced  # Track which model architecture
             }, scalers_path)
             print(f"Scalers saved to {scalers_path}")
