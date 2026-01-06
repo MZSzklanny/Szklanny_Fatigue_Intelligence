@@ -1982,8 +1982,8 @@ def cap_lab_page():
 # =============================================================================
 
 def sprs_page():
-    """SPRS - Player Fatigue & Resilience Analysis."""
-    render_header("SPRS - Player Fatigue & Resilience")
+    """Player Resilience Score Analysis."""
+    render_header("Player Resilience Score")
 
     # ==========================================================================
     # DATA LOADING
@@ -2067,7 +2067,7 @@ def sprs_page():
     # Option to show combined team average across seasons
     show_team_average = st.sidebar.checkbox(
         "Show Team Average (all seasons)",
-        value=False,
+        value=True,
         help="Combine data across all seasons for selected teams"
     )
 
@@ -3900,7 +3900,13 @@ def predict_player_next_game(model, scalers, player_history, target_cols):
     seq_features = scalers['seq_features']
 
     # Get last 10 games (or pad if less)
-    recent = player_history.tail(10)
+    recent = player_history.tail(10).copy()
+
+    # Ensure all required sequence features exist (add defaults for missing)
+    for feat in seq_features:
+        if feat not in recent.columns:
+            recent[feat] = 0.0
+
     sequence = recent[seq_features].values.astype(np.float32)
 
     if len(sequence) < 10:

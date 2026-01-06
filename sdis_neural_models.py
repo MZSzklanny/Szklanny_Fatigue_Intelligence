@@ -87,6 +87,16 @@ class PlayerSequenceDataset(Dataset):
         # Calculate efficiency metrics per quarter
         df['fg_pct'] = np.where(df['fga'] > 0, df['fgm'] / df['fga'], 0)
 
+        # Count quarters per player-game to filter incomplete games
+        qtr_counts = df.groupby(['player', 'game_id'])['qtr_num'].nunique().reset_index()
+        qtr_counts.columns = ['player', 'game_id', 'qtr_count']
+
+        # Filter to only complete games (4+ quarters - includes OT)
+        complete_games = qtr_counts[qtr_counts['qtr_count'] >= 4][['player', 'game_id']]
+        df = df.merge(complete_games, on=['player', 'game_id'], how='inner')
+
+        print(f"Filtered to complete games (4+ quarters): {len(df):,} quarter-records")
+
         # Game-level aggregations
         game_agg = df.groupby(['player', 'game_date', 'game_id']).agg({
             'pts': 'sum',
