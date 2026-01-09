@@ -4111,7 +4111,8 @@ def predict_player_with_opponent_context(model, scalers, player_history, target_
 
 def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
                                        n_simulations=1000, team_noise_std=2.5,
-                                       base_cv=0.10):
+                                       base_cv=0.10, your_recent_ppg=None, opp_recent_ppg=None,
+                                       recent_ppg_weight=0.35):
     """
     Run Monte Carlo simulation to estimate win probability and point differential distribution.
 
@@ -4119,6 +4120,7 @@ def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
     - Base CV of 0.10 (10%) is calibrated to match actual NBA player variance
     - Team noise of 2.5 points captures game-level luck (refs, bounces, etc.)
     - Stat-specific modifiers account for different variance patterns
+    - Recent team PPG blending ensures predictions reflect actual scoring trends
 
     Args:
         your_predictions_df: DataFrame with your team's player projections
@@ -4126,6 +4128,9 @@ def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
         n_simulations: Number of simulations to run
         team_noise_std: Standard deviation for team-level luck factor (default 2.5)
         base_cv: Base coefficient of variation for player scoring (default 0.10)
+        your_recent_ppg: Recent PPG for your team (last 5-10 games) - if provided, blends with projection
+        opp_recent_ppg: Recent PPG for opponent team
+        recent_ppg_weight: How much to weight recent PPG vs player projections (default 0.35 = 35%)
 
     Returns:
         dict with:
@@ -4191,23 +4196,56 @@ def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
     your_pts_stds = np.maximum(your_pts_stds, 0.5)
     opp_pts_stds = np.maximum(opp_pts_stds, 0.5)
 
+    # ==========================================================================
+    # RECENT TEAM PPG BLENDING
+    # ==========================================================================
+    # If recent team PPG is provided, blend player projections with actual team scoring
+    # This ensures predictions reflect what teams are actually scoring recently
+    # Weight: 35% recent PPG + 65% player projections (default)
+
+    your_base_projection = your_pts_weighted.sum()
+    opp_base_projection = opp_pts_weighted.sum()
+
+    # Calculate scaling factors to blend with recent PPG
+    your_ppg_scale = 1.0
+    opp_ppg_scale = 1.0
+
+    if your_recent_ppg is not None and your_base_projection > 0:
+        # Blend: weighted average of player projection and recent team PPG
+        your_blended = (1 - recent_ppg_weight) * your_base_projection + recent_ppg_weight * your_recent_ppg
+        your_ppg_scale = your_blended / your_base_projection
+
+    if opp_recent_ppg is not None and opp_base_projection > 0:
+        opp_blended = (1 - recent_ppg_weight) * opp_base_projection + recent_ppg_weight * opp_recent_ppg
+        opp_ppg_scale = opp_blended / opp_base_projection
+
+    # Apply scaling to individual player projections (maintains relative distribution)
+    your_pts_weighted_scaled = your_pts_weighted * your_ppg_scale
+    opp_pts_weighted_scaled = opp_pts_weighted * opp_ppg_scale
+
+    # Recalculate stds with scaled projections
+    your_pts_stds_scaled = your_pts_weighted_scaled * your_cv
+    opp_pts_stds_scaled = opp_pts_weighted_scaled * opp_cv
+    your_pts_stds_scaled = np.maximum(your_pts_stds_scaled, 0.5)
+    opp_pts_stds_scaled = np.maximum(opp_pts_stds_scaled, 0.5)
+
     # Run simulations
     point_diffs = []
     your_scores = []
     opp_scores = []
 
     for _ in range(n_simulations):
-        # Sample each player's points from normal distribution
-        your_sampled = np.maximum(0, np.random.normal(your_pts_weighted, your_pts_stds))
-        opp_sampled = np.maximum(0, np.random.normal(opp_pts_weighted, opp_pts_stds))
+        # Sample each player's points from normal distribution (using scaled projections)
+        your_sampled = np.maximum(0, np.random.normal(your_pts_weighted_scaled, your_pts_stds_scaled))
+        opp_sampled = np.maximum(0, np.random.normal(opp_pts_weighted_scaled, opp_pts_stds_scaled))
 
         # Sum to team totals
         your_total = your_sampled.sum()
         opp_total = opp_sampled.sum()
 
-        # Sanity check: cap team totals to realistic NBA range (85-140 points)
-        your_total = max(85, min(140, your_total))
-        opp_total = max(85, min(140, opp_total))
+        # Sanity check: cap team totals to realistic NBA range (85-145 points)
+        your_total = max(85, min(145, your_total))
+        opp_total = max(85, min(145, opp_total))
 
         # Add team-level noise (game variance, luck) - REDUCED from 3.5-5.0 to 2.5
         # This represents: referee variance, ball bounces, clutch shots, etc.
@@ -5034,11 +5072,51 @@ def predictive_model_page():
                 opp_lineup, opponent_team, your_def_metrics, not is_home, opp_minutes_multipliers, opp_rest_adj
             )
 
-        # Run Monte Carlo simulation (Step 4) - Using calibrated noise levels
+        # Calculate recent team PPG (last 5 games) for score blending
+        def get_recent_team_ppg(team_abbrev, n_games=5):
+            """Calculate team's average PPG over their last N games."""
+            team_df = df[df['team'] == team_abbrev].copy()
+            if team_df.empty:
+                return None
+
+            team_df['game_date'] = pd.to_datetime(team_df['game_date'])
+
+            # Get unique game dates and take the last N
+            game_dates = team_df.groupby('game_date').first().reset_index()
+            recent_dates = game_dates.nlargest(n_games, 'game_date')['game_date'].values
+
+            # Get all player stats from those games
+            recent_games = team_df[team_df['game_date'].isin(recent_dates)]
+
+            # Sum points per game
+            ppg_by_game = recent_games.groupby('game_date')['pts'].sum()
+
+            if len(ppg_by_game) == 0:
+                return None
+
+            return ppg_by_game.mean()
+
+        your_recent_ppg = get_recent_team_ppg(your_team, n_games=5)
+        opp_recent_ppg = get_recent_team_ppg(opponent_team, n_games=5)
+
+        # Show recent PPG info
+        if your_recent_ppg is not None or opp_recent_ppg is not None:
+            col_ppg1, col_ppg2 = st.columns(2)
+            with col_ppg1:
+                if your_recent_ppg is not None:
+                    st.metric(f"{your_team} Recent PPG (5g)", f"{your_recent_ppg:.1f}")
+            with col_ppg2:
+                if opp_recent_ppg is not None:
+                    st.metric(f"{opponent_team} Recent PPG (5g)", f"{opp_recent_ppg:.1f}")
+
+        # Run Monte Carlo simulation (Step 4) - Using calibrated noise levels + recent PPG blending
         with st.spinner(f"Running {n_simulations} game simulations..."):
             sim_results = run_monte_carlo_matchup_simulation(
                 your_predictions, opp_predictions,
                 n_simulations=n_simulations,
+                your_recent_ppg=your_recent_ppg,
+                opp_recent_ppg=opp_recent_ppg,
+                recent_ppg_weight=0.35,  # 35% weight to recent team PPG
                 team_noise_std=2.5,  # Reduced from 3.5 for tighter CIs
                 base_cv=0.10  # Calibrated 10% CV (down from 25%)
             )
