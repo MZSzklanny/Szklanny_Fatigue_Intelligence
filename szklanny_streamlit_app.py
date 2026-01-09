@@ -4035,6 +4035,116 @@ def get_player_vs_opponent_history(df, player, opponent_team, n_games=5):
     }
 
 
+# =============================================================================
+# ENHANCED MATCHUP STATS (FROM 5-SEASON TRAINING DATA)
+# =============================================================================
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_team_matchup_stats():
+    """Load pre-computed team vs team matchup stats from 5 seasons of data."""
+    import json
+    try:
+        # Try current directory first (Streamlit Cloud), then local path
+        for path in ["team_matchup_stats.json", os.path.join(DATA_DIR, "team_matchup_stats.json")]:
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    return json.load(f)
+        return {}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_player_vs_team_stats():
+    """Load pre-computed player vs team performance stats from 5 seasons of data."""
+    import pickle
+    try:
+        # Try current directory first (Streamlit Cloud), then local path
+        for path in ["player_vs_team_stats.pkl", os.path.join(DATA_DIR, "player_vs_team_stats.pkl")]:
+            if os.path.exists(path):
+                return pd.read_pickle(path)
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_team_matchup_history(team1, team2):
+    """
+    Get historical team vs team matchup stats.
+
+    Returns dict with:
+        - games_played: Total games between teams
+        - team1_avg_pts, team2_avg_pts: Average scoring
+        - team1_wins, team2_wins: Win counts
+        - avg_total: Average combined score
+        - recent_3_total: Avg total in last 3 games (if available)
+    """
+    matchup_stats = load_team_matchup_stats()
+    if not matchup_stats:
+        return None
+
+    # Try both orderings of teams
+    t1, t2 = sorted([team1, team2])
+    key = f"{t1}_vs_{t2}"
+
+    if key not in matchup_stats:
+        return None
+
+    stats = matchup_stats[key]
+
+    # Make sure we return stats in the right order for the caller
+    if stats['team1'] == team1:
+        return {
+            'games_played': stats['games_played'],
+            'your_avg_pts': stats['team1_avg_pts'],
+            'opp_avg_pts': stats['team2_avg_pts'],
+            'your_wins': stats['team1_wins'],
+            'opp_wins': stats['team2_wins'],
+            'avg_total': stats['avg_total'],
+            'recent_3_total': stats.get('recent_3_total')
+        }
+    else:
+        return {
+            'games_played': stats['games_played'],
+            'your_avg_pts': stats['team2_avg_pts'],
+            'opp_avg_pts': stats['team1_avg_pts'],
+            'your_wins': stats['team2_wins'],
+            'opp_wins': stats['team1_wins'],
+            'avg_total': stats['avg_total'],
+            'recent_3_total': stats.get('recent_3_total')
+        }
+
+
+def get_player_vs_team_boost(player, opponent_team):
+    """
+    Get player's historical performance boost/penalty vs specific opponent.
+
+    Returns dict with:
+        - pts_diff_pct: Percentage difference from player's average (+15 means scores 15% more)
+        - avg_pts: Average points vs this opponent
+        - games: Number of games in sample
+        - game_score_diff_pct: Game score difference
+    """
+    player_stats = load_player_vs_team_stats()
+    if player_stats.empty:
+        return None
+
+    match = player_stats[(player_stats['player'] == player) &
+                         (player_stats['opponent'] == opponent_team)]
+
+    if match.empty:
+        return None
+
+    row = match.iloc[0]
+    return {
+        'pts_diff_pct': row['pts_diff_pct'],
+        'avg_pts': row['avg_pts'],
+        'games': int(row['games']),
+        'game_score_diff_pct': row['game_score_diff_pct'],
+        'overall_pts': row['overall_pts']
+    }
+
+
 def predict_player_with_opponent_context(model, scalers, player_history, target_cols,
                                           opponent_metrics, matchup_history, is_home=True):
     """
@@ -5042,9 +5152,18 @@ def predictive_model_page():
                             elif hot_hand_ratio < 0.95:  # Scoring 5%+ below average (cold)
                                 hot_hand_mult = max(0.92, hot_hand_ratio * 0.97)
 
-                        # Matchup indicator
+                        # Matchup indicator - include player vs team historical boost
                         matchup_info = ""
-                        if matchup_history and matchup_history.get('n_games', 0) >= 2:
+                        player_vs_team = get_player_vs_team_boost(player, opponent_name)
+                        if player_vs_team and player_vs_team['games'] >= 3:
+                            boost_pct = player_vs_team['pts_diff_pct']
+                            if boost_pct > 5:
+                                matchup_info = f"📈+{boost_pct:.0f}% ({player_vs_team['games']}g)"
+                            elif boost_pct < -5:
+                                matchup_info = f"📉{boost_pct:.0f}% ({player_vs_team['games']}g)"
+                            else:
+                                matchup_info = f"→ ({player_vs_team['games']}g)"
+                        elif matchup_history and matchup_history.get('n_games', 0) >= 2:
                             matchup_info = f"({matchup_history['n_games']}g vs {opponent_name})"
 
                         # Get minutes multiplier for this player
@@ -5249,6 +5368,30 @@ def predictive_model_page():
         else:
             winner = "Toss-up"
             win_color = "🟡"
+
+        # Display Historical Matchup Data (from 5-season database)
+        historical_matchup = get_team_matchup_history(your_team, opponent_team)
+        if historical_matchup and historical_matchup['games_played'] >= 3:
+            st.markdown("### 📜 Historical Matchup (5 Seasons)")
+            hist_cols = st.columns(4)
+            with hist_cols[0]:
+                st.metric("Games Played", f"{historical_matchup['games_played']}")
+            with hist_cols[1]:
+                st.metric(f"{your_team} Record", f"{historical_matchup['your_wins']}-{historical_matchup['opp_wins']}")
+            with hist_cols[2]:
+                st.metric(f"{your_team} Avg PPG", f"{historical_matchup['your_avg_pts']:.1f}")
+            with hist_cols[3]:
+                st.metric(f"{opponent_team} Avg PPG", f"{historical_matchup['opp_avg_pts']:.1f}")
+
+            # Show if historical average differs significantly from prediction
+            hist_avg_total = historical_matchup['avg_total']
+            pred_total = your_score_mean + opp_score_mean
+            diff_from_hist = ((pred_total - hist_avg_total) / hist_avg_total * 100) if hist_avg_total > 0 else 0
+            if abs(diff_from_hist) > 5:
+                if diff_from_hist > 0:
+                    st.info(f"📈 Prediction ({pred_total:.0f}) is {abs(diff_from_hist):.1f}% higher than historical average ({hist_avg_total:.0f})")
+                else:
+                    st.info(f"📉 Prediction ({pred_total:.0f}) is {abs(diff_from_hist):.1f}% lower than historical average ({hist_avg_total:.0f})")
 
         # Display matchup summary with Monte Carlo results
         st.markdown("### 🏆 Matchup Summary")
