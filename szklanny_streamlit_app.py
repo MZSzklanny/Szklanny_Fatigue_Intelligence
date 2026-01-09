@@ -4761,7 +4761,7 @@ def predictive_model_page():
         player_game_counts = df.groupby('player')['game_id'].nunique()
         eligible_players = set(player_game_counts[player_game_counts >= 5].index)
 
-        # Calculate average minutes per game for each player (for default selection)
+        # Calculate average minutes per game for each player (for sorting)
         player_avg_minutes = df.groupby('player')['minutes'].mean()
 
         # Sort eligible players by average minutes (highest first)
@@ -4771,10 +4771,41 @@ def predictive_model_page():
         your_eligible = sorted(your_eligible_set, key=lambda p: player_avg_minutes.get(p, 0), reverse=True)
         opp_eligible = sorted(opp_eligible_set, key=lambda p: player_avg_minutes.get(p, 0), reverse=True)
 
+        # Find players who played minutes in their team's most recent game
+        def get_players_with_minutes_in_last_game(team_abbrev, eligible_list):
+            """Get players who had minutes > 0 in the team's most recent game."""
+            team_df = df[df['team'] == team_abbrev].copy()
+            if team_df.empty:
+                return eligible_list[:8]  # Fallback to first 8 eligible
+
+            # Find most recent game
+            team_df['game_date'] = pd.to_datetime(team_df['game_date'])
+            latest_game_date = team_df['game_date'].max()
+            latest_game = team_df[team_df['game_date'] == latest_game_date]
+
+            # Get players with minutes > 0 in that game
+            players_with_minutes = latest_game[latest_game['minutes'] > 0]['player'].unique()
+
+            # Filter to eligible players and sort by minutes in last game
+            last_game_minutes = latest_game.groupby('player')['minutes'].sum()
+            played_and_eligible = [p for p in eligible_list if p in players_with_minutes]
+
+            # Sort by minutes in last game (most minutes first)
+            played_and_eligible = sorted(played_and_eligible,
+                                        key=lambda p: last_game_minutes.get(p, 0), reverse=True)
+
+            return played_and_eligible
+
+        your_last_game_players = get_players_with_minutes_in_last_game(your_team, your_eligible)
+        opp_last_game_players = get_players_with_minutes_in_last_game(opponent_team, opp_eligible)
+
         st.markdown("---")
 
-        # Show roster info
-        st.caption(f"Found {len(your_eligible)} eligible players for {your_team}, {len(opp_eligible)} for {opponent_team}")
+        # Show roster info with last game context
+        your_last_game_count = len(your_last_game_players)
+        opp_last_game_count = len(opp_last_game_players)
+        st.caption(f"Found {len(your_eligible)} eligible players for {your_team} ({your_last_game_count} played last game), "
+                   f"{len(opp_eligible)} for {opponent_team} ({opp_last_game_count} played last game)")
 
         # Handle empty rosters
         if len(your_eligible) == 0:
@@ -4785,14 +4816,16 @@ def predictive_model_page():
             st.error(f"No eligible players found for {opponent_team}. Players need at least 5 games of data.")
             return
 
-        # Select starting lineup
+        # Select starting lineup - default to players who played in last game
         st.markdown("### 📋 Select Starting Lineups")
+        st.caption("📌 *Defaulting to players who had minutes in their team's most recent game*")
 
         col1, col2 = st.columns(2)
 
         with col1:
             st.markdown(f"**{your_team} Lineup**")
-            default_your = your_eligible[:min(8, len(your_eligible))]
+            # Default to players who played last game, or top 8 by avg minutes if none found
+            default_your = your_last_game_players if your_last_game_players else your_eligible[:8]
             your_lineup = st.multiselect(
                 f"Select {your_team} players (5-8 recommended)",
                 options=your_eligible,
@@ -4802,7 +4835,8 @@ def predictive_model_page():
 
         with col2:
             st.markdown(f"**{opponent_team} Lineup**")
-            default_opp = opp_eligible[:min(8, len(opp_eligible))]
+            # Default to players who played last game, or top 8 by avg minutes if none found
+            default_opp = opp_last_game_players if opp_last_game_players else opp_eligible[:8]
             opp_lineup = st.multiselect(
                 f"Select {opponent_team} players (5-8 recommended)",
                 options=opp_eligible,
