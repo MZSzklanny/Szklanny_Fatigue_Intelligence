@@ -4552,8 +4552,8 @@ def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minut
         adjusted['Proj PTS'] = prediction['Proj PTS'] * (1 + boost * 0.70 * efficiency_decay)
     if 'Floor PTS' in adjusted:
         adjusted['Floor PTS'] = prediction['Floor PTS'] * (1 + boost * 0.30 * efficiency_decay)  # Floor scales least
-    if 'XPCT PTS' in adjusted:
-        adjusted['XPCT PTS'] = prediction['XPCT PTS'] * (1 + boost * 0.50 * efficiency_decay)  # XPCT scales less
+    if '90th Pctile' in adjusted:
+        adjusted['90th Pctile'] = prediction['90th Pctile'] * (1 + boost * 0.50 * efficiency_decay)  # 90th pctile scales less
     if 'Max PTS' in adjusted:
         adjusted['Max PTS'] = prediction['Max PTS']  # Max stays the same (historical)
     if 'Proj FGA' in adjusted:
@@ -5009,21 +5009,24 @@ def predictive_model_page():
 
                         # Calculate floor, ceiling, and max stats from player's historical data
                         pts_col = 'total_pts' if 'total_pts' in player_history.columns else 'pts'
+                        proj_pts = pred.get('total_pts', 0)
                         if pts_col in player_history.columns:
                             floor_pts_10 = player_history[pts_col].quantile(0.10)  # 10th percentile floor
                             floor_pts_25 = player_history[pts_col].quantile(0.25)  # 25th percentile
                             max_pts = player_history[pts_col].max()
-                            ceiling_pts_90 = player_history[pts_col].quantile(0.90)
+                            historical_90 = player_history[pts_col].quantile(0.90)
+                            # 90th percentile should never be lower than projection - take the higher of the two
+                            ceiling_pts_90 = max(historical_90, proj_pts * 1.15)
                             ceiling_pts_95 = player_history[pts_col].quantile(0.95)
                             season_avg_pts = player_history[pts_col].mean()
                             recent_3_avg_pts = recent_3[pts_col].mean() if len(recent_3) >= 3 else season_avg_pts
                         else:
-                            floor_pts_10 = pred.get('total_pts', 0) * 0.5
-                            floor_pts_25 = pred.get('total_pts', 0) * 0.7
-                            max_pts = pred.get('total_pts', 0) * 1.5
-                            ceiling_pts_90 = pred.get('total_pts', 0) * 1.3
-                            ceiling_pts_95 = pred.get('total_pts', 0) * 1.4
-                            season_avg_pts = pred.get('total_pts', 0)
+                            floor_pts_10 = proj_pts * 0.5
+                            floor_pts_25 = proj_pts * 0.7
+                            max_pts = proj_pts * 1.5
+                            ceiling_pts_90 = proj_pts * 1.3
+                            ceiling_pts_95 = proj_pts * 1.4
+                            season_avg_pts = proj_pts
                             recent_3_avg_pts = season_avg_pts
 
                         # ==============================================
@@ -5066,7 +5069,7 @@ def predictive_model_page():
                             'Team': team_name,
                             'Floor PTS': floor_pts_10 * (0.5 + 0.5 * combined_adj),  # Floor adjusts less
                             'Proj PTS': pred.get('total_pts', 0) * combined_adj,
-                            'XPCT PTS': ceiling_pts_90 * (0.7 + 0.3 * combined_adj),  # Expected PTS (90th percentile)
+                            '90th Pctile': ceiling_pts_90 * (0.7 + 0.3 * combined_adj),  # 90th percentile
                             'Max PTS': max_pts,  # Max stays same (historical best)
                             'Proj REB': avg_reb * combined_adj,
                             'Proj AST': avg_ast * combined_adj,
@@ -5385,17 +5388,17 @@ def predictive_model_page():
             your_display['TOV%'] = your_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
             # Reorder columns to show stats prominently
-            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'XPCT PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', '90th Pctile', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
             display_cols = [c for c in col_order if c in your_display.columns]
             st.dataframe(your_display[display_cols], use_container_width=True, hide_index=True)
 
-            # Top scorer highlight with floor, xpct, and max stats
+            # Top scorer highlight with floor, 90th pctile, and max stats
             top_scorer = your_predictions.loc[your_predictions['Proj PTS'].idxmax()]
             floor_pts = top_scorer.get('Floor PTS', top_scorer['Proj PTS'] * 0.5)
-            xpct_pts = top_scorer.get('XPCT PTS', top_scorer['Proj PTS'])
+            pctile_90 = top_scorer.get('90th Pctile', top_scorer['Proj PTS'])
             max_pts = top_scorer.get('Max PTS', top_scorer['Proj PTS'])
-            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} — Floor: {floor_pts:.1f} | Proj: {top_scorer['Proj PTS']:.1f} | XPCT: {xpct_pts:.1f} | Max: {max_pts:.1f} pts")
+            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} — Floor: {floor_pts:.1f} | Proj: {top_scorer['Proj PTS']:.1f} | 90th: {pctile_90:.1f} | Max: {max_pts:.1f} pts")
         else:
             st.warning("Could not generate predictions for your team")
 
@@ -5407,16 +5410,16 @@ def predictive_model_page():
             opp_display['TOV%'] = opp_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
             # Reorder columns to show stats prominently
-            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'XPCT PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', '90th Pctile', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
             display_cols = [c for c in col_order if c in opp_display.columns]
             st.dataframe(opp_display[display_cols], use_container_width=True, hide_index=True)
 
             opp_top = opp_predictions.loc[opp_predictions['Proj PTS'].idxmax()]
             opp_floor = opp_top.get('Floor PTS', opp_top['Proj PTS'] * 0.5)
-            opp_xpct = opp_top.get('XPCT PTS', opp_top['Proj PTS'])
+            opp_90th = opp_top.get('90th Pctile', opp_top['Proj PTS'])
             opp_max = opp_top.get('Max PTS', opp_top['Proj PTS'])
-            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} — Floor: {opp_floor:.1f} | Proj: {opp_top['Proj PTS']:.1f} | XPCT: {opp_xpct:.1f} | Max: {opp_max:.1f} pts")
+            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} — Floor: {opp_floor:.1f} | Proj: {opp_top['Proj PTS']:.1f} | 90th: {opp_90th:.1f} | Max: {opp_max:.1f} pts")
         else:
             st.warning("Could not generate predictions for opponent")
 
