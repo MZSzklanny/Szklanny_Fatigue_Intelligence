@@ -4197,27 +4197,32 @@ def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
     opp_pts_stds = np.maximum(opp_pts_stds, 0.5)
 
     # ==========================================================================
-    # RECENT TEAM PPG BLENDING
+    # RECENT TEAM PPG SCALING
     # ==========================================================================
-    # If recent team PPG is provided, blend player projections with actual team scoring
-    # This ensures predictions reflect what teams are actually scoring recently
-    # Weight: 35% recent PPG + 65% player projections (default)
+    # Scale player projections to match recent team scoring trends
+    # This ensures predictions reflect what teams are actually scoring
+    # The selected lineup typically represents 85-95% of team scoring
+    # We scale up to the full team PPG target
 
     your_base_projection = your_pts_weighted.sum()
     opp_base_projection = opp_pts_weighted.sum()
 
-    # Calculate scaling factors to blend with recent PPG
+    # Estimate: selected lineup typically accounts for ~88% of team points
+    # (bench/rotation players not in lineup contribute the rest)
+    LINEUP_SCORING_SHARE = 0.88
+
+    # Calculate scaling factors to reach recent team PPG
     your_ppg_scale = 1.0
     opp_ppg_scale = 1.0
 
     if your_recent_ppg is not None and your_base_projection > 0:
-        # Blend: weighted average of player projection and recent team PPG
-        your_blended = (1 - recent_ppg_weight) * your_base_projection + recent_ppg_weight * your_recent_ppg
-        your_ppg_scale = your_blended / your_base_projection
+        # Target: blend toward recent PPG, accounting for lineup share
+        your_target = (1 - recent_ppg_weight) * (your_base_projection / LINEUP_SCORING_SHARE) + recent_ppg_weight * your_recent_ppg
+        your_ppg_scale = your_target / your_base_projection
 
     if opp_recent_ppg is not None and opp_base_projection > 0:
-        opp_blended = (1 - recent_ppg_weight) * opp_base_projection + recent_ppg_weight * opp_recent_ppg
-        opp_ppg_scale = opp_blended / opp_base_projection
+        opp_target = (1 - recent_ppg_weight) * (opp_base_projection / LINEUP_SCORING_SHARE) + recent_ppg_weight * opp_recent_ppg
+        opp_ppg_scale = opp_target / opp_base_projection
 
     # Apply scaling to individual player projections (maintains relative distribution)
     your_pts_weighted_scaled = your_pts_weighted * your_ppg_scale
@@ -4243,18 +4248,14 @@ def run_monte_carlo_matchup_simulation(your_predictions_df, opp_predictions_df,
         your_total = your_sampled.sum()
         opp_total = opp_sampled.sum()
 
-        # Sanity check: cap team totals to realistic NBA range (85-145 points)
-        your_total = max(85, min(145, your_total))
-        opp_total = max(85, min(145, opp_total))
-
-        # Add team-level noise (game variance, luck) - REDUCED from 3.5-5.0 to 2.5
+        # Add team-level noise (game variance, luck)
         # This represents: referee variance, ball bounces, clutch shots, etc.
         your_total += np.random.normal(0, team_noise_std)
         opp_total += np.random.normal(0, team_noise_std)
 
-        # Final clip to ensure realistic scores
-        your_total = max(80, min(145, your_total))
-        opp_total = max(80, min(145, opp_total))
+        # Only cap at upper end for extreme outliers (no lower floor - let low scores happen)
+        your_total = min(160, your_total)
+        opp_total = min(160, opp_total)
 
         your_scores.append(your_total)
         opp_scores.append(opp_total)
@@ -5116,7 +5117,7 @@ def predictive_model_page():
                 n_simulations=n_simulations,
                 your_recent_ppg=your_recent_ppg,
                 opp_recent_ppg=opp_recent_ppg,
-                recent_ppg_weight=0.35,  # 35% weight to recent team PPG
+                recent_ppg_weight=0.50,  # 50% weight to recent team PPG
                 team_noise_std=2.5,  # Reduced from 3.5 for tighter CIs
                 base_cv=0.10  # Calibrated 10% CV (down from 25%)
             )
