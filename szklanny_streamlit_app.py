@@ -4663,9 +4663,12 @@ def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minut
     if 'Floor PTS' in adjusted:
         adjusted['Floor PTS'] = prediction['Floor PTS'] * (1 + boost * 0.30 * efficiency_decay)  # Floor scales least
     if '90th Pctile' in adjusted:
-        adjusted['90th Pctile'] = prediction['90th Pctile'] * (1 + boost * 0.50 * efficiency_decay)  # 90th pctile scales less
+        raw_90th = prediction['90th Pctile'] * (1 + boost * 0.50 * efficiency_decay)
+        # 90th Pctile must always be >= Proj PTS * 1.15
+        adjusted['90th Pctile'] = max(raw_90th, adjusted.get('Proj PTS', 0) * 1.15)
     if 'Max PTS' in adjusted:
-        adjusted['Max PTS'] = prediction['Max PTS']  # Max stays the same (historical)
+        # Max must always be >= 90th Pctile
+        adjusted['Max PTS'] = max(prediction['Max PTS'], adjusted.get('90th Pctile', 0))
     if 'Proj FGA' in adjusted:
         adjusted['Proj FGA'] = prediction['Proj FGA'] * (1 + boost * 0.85)
     if 'Proj REB' in adjusted:
