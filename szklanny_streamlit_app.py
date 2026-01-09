@@ -4552,8 +4552,8 @@ def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minut
         adjusted['Proj PTS'] = prediction['Proj PTS'] * (1 + boost * 0.70 * efficiency_decay)
     if 'Floor PTS' in adjusted:
         adjusted['Floor PTS'] = prediction['Floor PTS'] * (1 + boost * 0.30 * efficiency_decay)  # Floor scales least
-    if 'Ceiling PTS' in adjusted:
-        adjusted['Ceiling PTS'] = prediction['Ceiling PTS'] * (1 + boost * 0.50 * efficiency_decay)  # Ceiling scales less
+    if 'XPCT PTS' in adjusted:
+        adjusted['XPCT PTS'] = prediction['XPCT PTS'] * (1 + boost * 0.50 * efficiency_decay)  # XPCT scales less
     if 'Max PTS' in adjusted:
         adjusted['Max PTS'] = prediction['Max PTS']  # Max stays the same (historical)
     if 'Proj FGA' in adjusted:
@@ -5066,7 +5066,7 @@ def predictive_model_page():
                             'Team': team_name,
                             'Floor PTS': floor_pts_10 * (0.5 + 0.5 * combined_adj),  # Floor adjusts less
                             'Proj PTS': pred.get('total_pts', 0) * combined_adj,
-                            'Ceiling PTS': ceiling_pts_90 * (0.7 + 0.3 * combined_adj),  # Ceiling adjusts moderately
+                            'XPCT PTS': ceiling_pts_90 * (0.7 + 0.3 * combined_adj),  # Expected PTS (90th percentile)
                             'Max PTS': max_pts,  # Max stays same (historical best)
                             'Proj REB': avg_reb * combined_adj,
                             'Proj AST': avg_ast * combined_adj,
@@ -5384,18 +5384,18 @@ def predictive_model_page():
             your_display['TS%'] = your_display['TS%'].apply(lambda x: f"{x:.1f}%")
             your_display['TOV%'] = your_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
-            # Reorder columns to show ceiling stats prominently
-            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+            # Reorder columns to show stats prominently
+            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'XPCT PTS', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
             display_cols = [c for c in col_order if c in your_display.columns]
             st.dataframe(your_display[display_cols], use_container_width=True, hide_index=True)
 
-            # Top scorer highlight with floor, ceiling, and max stats
+            # Top scorer highlight with floor, xpct, and max stats
             top_scorer = your_predictions.loc[your_predictions['Proj PTS'].idxmax()]
             floor_pts = top_scorer.get('Floor PTS', top_scorer['Proj PTS'] * 0.5)
-            ceiling_pts = top_scorer.get('Ceiling PTS', top_scorer['Proj PTS'])
+            xpct_pts = top_scorer.get('XPCT PTS', top_scorer['Proj PTS'])
             max_pts = top_scorer.get('Max PTS', top_scorer['Proj PTS'])
-            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} — Floor: {floor_pts:.1f} | Proj: {top_scorer['Proj PTS']:.1f} | Ceiling: {ceiling_pts:.1f} | Max: {max_pts:.1f} pts")
+            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} — Floor: {floor_pts:.1f} | Proj: {top_scorer['Proj PTS']:.1f} | XPCT: {xpct_pts:.1f} | Max: {max_pts:.1f} pts")
         else:
             st.warning("Could not generate predictions for your team")
 
@@ -5406,17 +5406,17 @@ def predictive_model_page():
             opp_display['TS%'] = opp_display['TS%'].apply(lambda x: f"{x:.1f}%")
             opp_display['TOV%'] = opp_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
-            # Reorder columns to show ceiling stats prominently
-            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+            # Reorder columns to show stats prominently
+            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'XPCT PTS', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
             display_cols = [c for c in col_order if c in opp_display.columns]
             st.dataframe(opp_display[display_cols], use_container_width=True, hide_index=True)
 
             opp_top = opp_predictions.loc[opp_predictions['Proj PTS'].idxmax()]
             opp_floor = opp_top.get('Floor PTS', opp_top['Proj PTS'] * 0.5)
-            opp_ceiling = opp_top.get('Ceiling PTS', opp_top['Proj PTS'])
+            opp_xpct = opp_top.get('XPCT PTS', opp_top['Proj PTS'])
             opp_max = opp_top.get('Max PTS', opp_top['Proj PTS'])
-            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} — Floor: {opp_floor:.1f} | Proj: {opp_top['Proj PTS']:.1f} | Ceiling: {opp_ceiling:.1f} | Max: {opp_max:.1f} pts")
+            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} — Floor: {opp_floor:.1f} | Proj: {opp_top['Proj PTS']:.1f} | XPCT: {opp_xpct:.1f} | Max: {opp_max:.1f} pts")
         else:
             st.warning("Could not generate predictions for opponent")
 
