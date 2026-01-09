@@ -5154,9 +5154,15 @@ def predictive_model_page():
 
                         # Matchup indicator - include player vs team historical boost
                         matchup_info = ""
+                        matchup_adj = 1.0  # Default no adjustment
                         player_vs_team = get_player_vs_team_boost(player, opponent_name)
                         if player_vs_team and player_vs_team['games'] >= 3:
                             boost_pct = player_vs_team['pts_diff_pct']
+                            # Apply matchup adjustment (capped at +/- 20%)
+                            # Scale: if player scores 15% more vs this team historically, boost by ~10%
+                            matchup_adj = 1.0 + (boost_pct / 100) * 0.7  # 70% of historical diff
+                            matchup_adj = max(0.85, min(1.20, matchup_adj))  # Cap between -15% and +20%
+
                             if boost_pct > 5:
                                 matchup_info = f"📈+{boost_pct:.0f}% ({player_vs_team['games']}g)"
                             elif boost_pct < -5:
@@ -5172,8 +5178,8 @@ def predictive_model_page():
                         # Apply rest adjustment to projections
                         rest_adj = rest_adjustment
 
-                        # Combined adjustment: rest * hot hand
-                        combined_adj = rest_adj * hot_hand_mult
+                        # Combined adjustment: rest * hot hand * matchup
+                        combined_adj = rest_adj * hot_hand_mult * matchup_adj
 
                         # Hot hand indicator for display
                         hot_hand_str = ""
@@ -5207,6 +5213,7 @@ def predictive_model_page():
                             'TOV%': pred.get('tov_rate', 0) * 100 * (1.1 - 0.1 * combined_adj),
                             'Game Score': pred.get('game_score', 0) * combined_adj,
                             'Matchup': matchup_info,
+                            'Matchup Adj': f"{(matchup_adj-1)*100:+.1f}%" if matchup_adj != 1.0 else "-",
                             'Base MIN': avg_mins,
                             'Rest Adj': f"{(rest_adj-1)*100:+.1f}%" if rest_adj != 1.0 else "-",
                             'Hot Hand': hot_hand_str if hot_hand_str else "-"
