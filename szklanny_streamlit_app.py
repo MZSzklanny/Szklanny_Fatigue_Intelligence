@@ -4982,7 +4982,7 @@ def predictive_model_page():
                    f"{your_team} max boost: {(your_max_boost-1)*100:.0f}%, {opponent_team} max boost: {(opp_max_boost-1)*100:.0f}%")
 
         def predict_lineup_with_context(lineup, team_name, opponent_metrics, is_home_team, minutes_multipliers, rest_adjustment=1.0):
-            """Generate predictions for a full lineup with opponent context, minutes redistribution, and rest factors."""
+            """Generate predictions for a full lineup with opponent context, minutes redistribution, rest factors, and hot hand boost."""
             predictions = []
             for player in lineup:
                 player_history = prepare_player_game_history(df, player)
@@ -5000,6 +5000,7 @@ def predictive_model_page():
                     if pred is not None:
                         # Use 5-game rolling average for REB, AST, STL, BLK
                         recent_5 = player_history.tail(5)
+                        recent_3 = player_history.tail(3)  # For hot hand calculation
                         avg_reb = recent_5['total_trb'].mean() if 'total_trb' in recent_5.columns else 0
                         avg_ast = recent_5['total_ast'].mean() if 'total_ast' in recent_5.columns else 0
                         avg_stl = recent_5['total_stl'].mean() if 'total_stl' in recent_5.columns else 0
@@ -5014,12 +5015,29 @@ def predictive_model_page():
                             max_pts = player_history[pts_col].max()
                             ceiling_pts_90 = player_history[pts_col].quantile(0.90)
                             ceiling_pts_95 = player_history[pts_col].quantile(0.95)
+                            season_avg_pts = player_history[pts_col].mean()
+                            recent_3_avg_pts = recent_3[pts_col].mean() if len(recent_3) >= 3 else season_avg_pts
                         else:
                             floor_pts_10 = pred.get('total_pts', 0) * 0.5
                             floor_pts_25 = pred.get('total_pts', 0) * 0.7
                             max_pts = pred.get('total_pts', 0) * 1.5
                             ceiling_pts_90 = pred.get('total_pts', 0) * 1.3
                             ceiling_pts_95 = pred.get('total_pts', 0) * 1.4
+                            season_avg_pts = pred.get('total_pts', 0)
+                            recent_3_avg_pts = season_avg_pts
+
+                        # ==============================================
+                        # HOT HAND BOOST: Compare last 3 games to season avg
+                        # ==============================================
+                        # If player is scoring above their average recently, boost their projection
+                        hot_hand_mult = 1.0
+                        if season_avg_pts > 0:
+                            hot_hand_ratio = recent_3_avg_pts / season_avg_pts
+                            # Cap the boost between 0.90 and 1.15 (max 15% boost for hot players)
+                            if hot_hand_ratio > 1.05:  # Scoring 5%+ above average
+                                hot_hand_mult = min(1.15, 0.85 + (hot_hand_ratio * 0.15))
+                            elif hot_hand_ratio < 0.95:  # Scoring 5%+ below average (cold)
+                                hot_hand_mult = max(0.92, hot_hand_ratio * 0.97)
 
                         # Matchup indicator
                         matchup_info = ""
@@ -5030,28 +5048,38 @@ def predictive_model_page():
                         mins_mult = minutes_multipliers.get(player, 1.0)
 
                         # Apply rest adjustment to projections
-                        # Floor and ceiling are based on historical data, so apply smaller adjustment
                         rest_adj = rest_adjustment
 
-                        # Base prediction with floor, ceiling, and max stats (rest-adjusted)
+                        # Combined adjustment: rest * hot hand
+                        combined_adj = rest_adj * hot_hand_mult
+
+                        # Hot hand indicator for display
+                        hot_hand_str = ""
+                        if hot_hand_mult > 1.02:
+                            hot_hand_str = f"🔥+{(hot_hand_mult-1)*100:.0f}%"
+                        elif hot_hand_mult < 0.98:
+                            hot_hand_str = f"❄️{(hot_hand_mult-1)*100:.0f}%"
+
+                        # Base prediction with floor, ceiling, and max stats (rest + hot hand adjusted)
                         base_pred = {
                             'Player': player,
                             'Team': team_name,
-                            'Floor PTS': floor_pts_10 * (0.5 + 0.5 * rest_adj),  # Floor adjusts less
-                            'Proj PTS': pred.get('total_pts', 0) * rest_adj,
-                            'Ceiling PTS': ceiling_pts_90 * (0.7 + 0.3 * rest_adj),  # Ceiling adjusts moderately
+                            'Floor PTS': floor_pts_10 * (0.5 + 0.5 * combined_adj),  # Floor adjusts less
+                            'Proj PTS': pred.get('total_pts', 0) * combined_adj,
+                            'Ceiling PTS': ceiling_pts_90 * (0.7 + 0.3 * combined_adj),  # Ceiling adjusts moderately
                             'Max PTS': max_pts,  # Max stays same (historical best)
-                            'Proj REB': avg_reb * rest_adj,
-                            'Proj AST': avg_ast * rest_adj,
-                            'Proj STL': avg_stl * rest_adj,
-                            'Proj BLK': avg_blk * rest_adj,
-                            'Proj FGA': pred.get('total_fga', 0) * rest_adj,
-                            'TS%': pred.get('ts_pct', 0) * 100 * (0.9 + 0.1 * rest_adj),  # TS% slightly affected
-                            'TOV%': pred.get('tov_rate', 0) * 100 * (1.1 - 0.1 * rest_adj),  # More TOV on fatigue
-                            'Game Score': pred.get('game_score', 0) * rest_adj,
+                            'Proj REB': avg_reb * combined_adj,
+                            'Proj AST': avg_ast * combined_adj,
+                            'Proj STL': avg_stl * combined_adj,
+                            'Proj BLK': avg_blk * combined_adj,
+                            'Proj FGA': pred.get('total_fga', 0) * combined_adj,
+                            'TS%': pred.get('ts_pct', 0) * 100 * (0.9 + 0.1 * combined_adj),
+                            'TOV%': pred.get('tov_rate', 0) * 100 * (1.1 - 0.1 * combined_adj),
+                            'Game Score': pred.get('game_score', 0) * combined_adj,
                             'Matchup': matchup_info,
                             'Base MIN': avg_mins,
-                            'Rest Adj': f"{(rest_adj-1)*100:+.1f}%" if rest_adj != 1.0 else "-"
+                            'Rest Adj': f"{(rest_adj-1)*100:+.1f}%" if rest_adj != 1.0 else "-",
+                            'Hot Hand': hot_hand_str if hot_hand_str else "-"
                         }
 
                         # Apply minutes boost if player will get more minutes
@@ -5072,6 +5100,55 @@ def predictive_model_page():
             opp_predictions = predict_lineup_with_context(
                 opp_lineup, opponent_team, your_def_metrics, not is_home, opp_minutes_multipliers, opp_rest_adj
             )
+
+        # ==============================================
+        # MINUTES-BASED POINT REDISTRIBUTION
+        # ==============================================
+        # Take points from low-minute players and give to starters
+        def redistribute_points_by_minutes(predictions_df, min_threshold=20):
+            """
+            Redistribute points from bench players (< min_threshold minutes) to starters.
+            This reflects reality: starters get more opportunities when bench plays less.
+            """
+            if len(predictions_df) == 0:
+                return predictions_df
+
+            df_copy = predictions_df.copy()
+
+            # Get projected minutes (use Base MIN if Proj MIN not available)
+            mins_col = 'Proj MIN' if 'Proj MIN' in df_copy.columns else 'Base MIN'
+            if mins_col not in df_copy.columns:
+                return df_copy
+
+            # Identify starters (>= threshold) and bench (< threshold)
+            starters_mask = df_copy[mins_col] >= min_threshold
+            bench_mask = df_copy[mins_col] < min_threshold
+
+            n_starters = starters_mask.sum()
+            n_bench = bench_mask.sum()
+
+            if n_starters == 0 or n_bench == 0:
+                return df_copy
+
+            # Take 15% of bench player points and redistribute to starters
+            redistribution_rate = 0.15
+            bench_pts_to_redistribute = (df_copy.loc[bench_mask, 'Proj PTS'] * redistribution_rate).sum()
+
+            # Reduce bench points
+            df_copy.loc[bench_mask, 'Proj PTS'] *= (1 - redistribution_rate)
+
+            # Distribute to starters proportionally by their current projection
+            starter_pts_total = df_copy.loc[starters_mask, 'Proj PTS'].sum()
+            if starter_pts_total > 0:
+                for idx in df_copy[starters_mask].index:
+                    share = df_copy.loc[idx, 'Proj PTS'] / starter_pts_total
+                    df_copy.loc[idx, 'Proj PTS'] += bench_pts_to_redistribute * share
+
+            return df_copy
+
+        # Apply redistribution
+        your_predictions = redistribute_points_by_minutes(your_predictions, min_threshold=18)
+        opp_predictions = redistribute_points_by_minutes(opp_predictions, min_threshold=18)
 
         # Calculate recent team PPG (last 5 games) for score blending
         def get_recent_team_ppg(team_abbrev, n_games=5):
@@ -5308,7 +5385,7 @@ def predictive_model_page():
             your_display['TOV%'] = your_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
             # Reorder columns to show ceiling stats prominently
-            col_order = ['Player', 'Team', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
             display_cols = [c for c in col_order if c in your_display.columns]
             st.dataframe(your_display[display_cols], use_container_width=True, hide_index=True)
@@ -5330,7 +5407,7 @@ def predictive_model_page():
             opp_display['TOV%'] = opp_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
             # Reorder columns to show ceiling stats prominently
-            col_order = ['Player', 'Team', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+            col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
             display_cols = [c for c in col_order if c in opp_display.columns]
             st.dataframe(opp_display[display_cols], use_container_width=True, hide_index=True)
