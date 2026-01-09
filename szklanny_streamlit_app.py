@@ -4511,6 +4511,12 @@ def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minut
     # Apply scaled boosts with efficiency decay
     if 'Proj PTS' in adjusted:
         adjusted['Proj PTS'] = prediction['Proj PTS'] * (1 + boost * 0.70 * efficiency_decay)
+    if 'Floor PTS' in adjusted:
+        adjusted['Floor PTS'] = prediction['Floor PTS'] * (1 + boost * 0.30 * efficiency_decay)  # Floor scales least
+    if 'Ceiling PTS' in adjusted:
+        adjusted['Ceiling PTS'] = prediction['Ceiling PTS'] * (1 + boost * 0.50 * efficiency_decay)  # Ceiling scales less
+    if 'Max PTS' in adjusted:
+        adjusted['Max PTS'] = prediction['Max PTS']  # Max stays the same (historical)
     if 'Proj FGA' in adjusted:
         adjusted['Proj FGA'] = prediction['Proj FGA'] * (1 + boost * 0.85)
     if 'Proj REB' in adjusted:
@@ -4820,6 +4826,68 @@ def predictive_model_page():
         with col_set2:
             n_simulations = st.selectbox("Simulations", [500, 1000, 2000], index=1, key="n_sims")
 
+        # Rest/Schedule Factors
+        st.markdown("### 🛌 Rest & Schedule Factors")
+        st.caption("Account for back-to-backs, 3-in-4 nights, and rest days to adjust predictions")
+
+        col_rest1, col_rest2 = st.columns(2)
+        with col_rest1:
+            st.markdown(f"**{your_team} Schedule**")
+            your_days_rest = st.selectbox(f"{your_team} Days Rest", [0, 1, 2, 3, 4, 5], index=1,
+                                          help="0 = B2B (played yesterday), 1 = normal rest, 2+ = extra rest",
+                                          key="your_rest")
+            your_3in4 = st.checkbox(f"{your_team} 3 games in 4 nights?", value=False, key="your_3in4")
+            your_4in5 = st.checkbox(f"{your_team} 4 games in 5 nights?", value=False, key="your_4in5")
+
+        with col_rest2:
+            st.markdown(f"**{opponent_team} Schedule**")
+            opp_days_rest = st.selectbox(f"{opponent_team} Days Rest", [0, 1, 2, 3, 4, 5], index=1,
+                                         help="0 = B2B (played yesterday), 1 = normal rest, 2+ = extra rest",
+                                         key="opp_rest")
+            opp_3in4 = st.checkbox(f"{opponent_team} 3 games in 4 nights?", value=False, key="opp_3in4")
+            opp_4in5 = st.checkbox(f"{opponent_team} 4 games in 5 nights?", value=False, key="opp_4in5")
+
+        # Calculate rest factor adjustments
+        def calculate_rest_adjustment(days_rest, is_3in4, is_4in5):
+            """
+            Calculate performance adjustment based on rest/schedule.
+            Returns a multiplier: <1.0 = penalty, >1.0 = boost
+            """
+            adj = 1.0
+
+            # Days rest impact
+            if days_rest == 0:  # B2B
+                adj *= 0.94  # 6% penalty on B2B
+            elif days_rest >= 3:  # Extended rest
+                adj *= 1.02  # 2% boost for extra rest
+
+            # 3-in-4 impact
+            if is_3in4:
+                adj *= 0.96  # Additional 4% penalty
+
+            # 4-in-5 impact (stacks with 3in4 if both true)
+            if is_4in5:
+                adj *= 0.94  # Additional 6% penalty
+
+            return adj
+
+        your_rest_adj = calculate_rest_adjustment(your_days_rest, your_3in4, your_4in5)
+        opp_rest_adj = calculate_rest_adjustment(opp_days_rest, opp_3in4, opp_4in5)
+
+        # Show rest impact
+        if your_rest_adj != 1.0 or opp_rest_adj != 1.0:
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                if your_rest_adj < 1.0:
+                    st.warning(f"⚠️ {your_team}: {(1-your_rest_adj)*100:.1f}% fatigue penalty")
+                elif your_rest_adj > 1.0:
+                    st.success(f"✅ {your_team}: +{(your_rest_adj-1)*100:.1f}% rest boost")
+            with col_info2:
+                if opp_rest_adj < 1.0:
+                    st.success(f"✅ {opponent_team}: {(1-opp_rest_adj)*100:.1f}% fatigue penalty (advantage for you!)")
+                elif opp_rest_adj > 1.0:
+                    st.warning(f"⚠️ {opponent_team}: +{(opp_rest_adj-1)*100:.1f}% rest boost")
+
         # Generate predictions for all players
         st.markdown("---")
         st.markdown("## 📊 Game Prediction")
@@ -4840,8 +4908,8 @@ def predictive_model_page():
             st.info(f"📊 **Minutes Redistribution Active**: Adjusting projections based on available players. "
                    f"{your_team} max boost: {(your_max_boost-1)*100:.0f}%, {opponent_team} max boost: {(opp_max_boost-1)*100:.0f}%")
 
-        def predict_lineup_with_context(lineup, team_name, opponent_metrics, is_home_team, minutes_multipliers):
-            """Generate predictions for a full lineup with opponent context and minutes redistribution."""
+        def predict_lineup_with_context(lineup, team_name, opponent_metrics, is_home_team, minutes_multipliers, rest_adjustment=1.0):
+            """Generate predictions for a full lineup with opponent context, minutes redistribution, and rest factors."""
             predictions = []
             for player in lineup:
                 player_history = prepare_player_game_history(df, player)
@@ -4865,6 +4933,21 @@ def predictive_model_page():
                         avg_blk = recent_5['total_blk'].mean() if 'total_blk' in recent_5.columns else 0
                         avg_mins = recent_5['total_minutes'].mean() if 'total_minutes' in recent_5.columns else 25
 
+                        # Calculate floor, ceiling, and max stats from player's historical data
+                        pts_col = 'total_pts' if 'total_pts' in player_history.columns else 'pts'
+                        if pts_col in player_history.columns:
+                            floor_pts_10 = player_history[pts_col].quantile(0.10)  # 10th percentile floor
+                            floor_pts_25 = player_history[pts_col].quantile(0.25)  # 25th percentile
+                            max_pts = player_history[pts_col].max()
+                            ceiling_pts_90 = player_history[pts_col].quantile(0.90)
+                            ceiling_pts_95 = player_history[pts_col].quantile(0.95)
+                        else:
+                            floor_pts_10 = pred.get('total_pts', 0) * 0.5
+                            floor_pts_25 = pred.get('total_pts', 0) * 0.7
+                            max_pts = pred.get('total_pts', 0) * 1.5
+                            ceiling_pts_90 = pred.get('total_pts', 0) * 1.3
+                            ceiling_pts_95 = pred.get('total_pts', 0) * 1.4
+
                         # Matchup indicator
                         matchup_info = ""
                         if matchup_history and matchup_history.get('n_games', 0) >= 2:
@@ -4873,21 +4956,29 @@ def predictive_model_page():
                         # Get minutes multiplier for this player
                         mins_mult = minutes_multipliers.get(player, 1.0)
 
-                        # Base prediction
+                        # Apply rest adjustment to projections
+                        # Floor and ceiling are based on historical data, so apply smaller adjustment
+                        rest_adj = rest_adjustment
+
+                        # Base prediction with floor, ceiling, and max stats (rest-adjusted)
                         base_pred = {
                             'Player': player,
                             'Team': team_name,
-                            'Proj PTS': pred.get('total_pts', 0),
-                            'Proj REB': avg_reb,
-                            'Proj AST': avg_ast,
-                            'Proj STL': avg_stl,
-                            'Proj BLK': avg_blk,
-                            'Proj FGA': pred.get('total_fga', 0),
-                            'TS%': pred.get('ts_pct', 0) * 100,
-                            'TOV%': pred.get('tov_rate', 0) * 100,
-                            'Game Score': pred.get('game_score', 0),
+                            'Floor PTS': floor_pts_10 * (0.5 + 0.5 * rest_adj),  # Floor adjusts less
+                            'Proj PTS': pred.get('total_pts', 0) * rest_adj,
+                            'Ceiling PTS': ceiling_pts_90 * (0.7 + 0.3 * rest_adj),  # Ceiling adjusts moderately
+                            'Max PTS': max_pts,  # Max stays same (historical best)
+                            'Proj REB': avg_reb * rest_adj,
+                            'Proj AST': avg_ast * rest_adj,
+                            'Proj STL': avg_stl * rest_adj,
+                            'Proj BLK': avg_blk * rest_adj,
+                            'Proj FGA': pred.get('total_fga', 0) * rest_adj,
+                            'TS%': pred.get('ts_pct', 0) * 100 * (0.9 + 0.1 * rest_adj),  # TS% slightly affected
+                            'TOV%': pred.get('tov_rate', 0) * 100 * (1.1 - 0.1 * rest_adj),  # More TOV on fatigue
+                            'Game Score': pred.get('game_score', 0) * rest_adj,
                             'Matchup': matchup_info,
-                            'Base MIN': avg_mins
+                            'Base MIN': avg_mins,
+                            'Rest Adj': f"{(rest_adj-1)*100:+.1f}%" if rest_adj != 1.0 else "-"
                         }
 
                         # Apply minutes boost if player will get more minutes
@@ -4901,12 +4992,12 @@ def predictive_model_page():
 
             return pd.DataFrame(predictions)
 
-        with st.spinner("Generating opponent-adjusted predictions with minutes redistribution..."):
+        with st.spinner("Generating opponent-adjusted predictions with rest factors and minutes redistribution..."):
             your_predictions = predict_lineup_with_context(
-                your_lineup, your_team, opp_def_metrics, is_home, your_minutes_multipliers
+                your_lineup, your_team, opp_def_metrics, is_home, your_minutes_multipliers, your_rest_adj
             )
             opp_predictions = predict_lineup_with_context(
-                opp_lineup, opponent_team, your_def_metrics, not is_home, opp_minutes_multipliers
+                opp_lineup, opponent_team, your_def_metrics, not is_home, opp_minutes_multipliers, opp_rest_adj
             )
 
         # Run Monte Carlo simulation (Step 4) - Using calibrated noise levels
@@ -5102,11 +5193,19 @@ def predictive_model_page():
             your_display = your_predictions.sort_values('Proj PTS', ascending=False).round(1)
             your_display['TS%'] = your_display['TS%'].apply(lambda x: f"{x:.1f}%")
             your_display['TOV%'] = your_display['TOV%'].apply(lambda x: f"{x:.1f}%")
-            st.dataframe(your_display, use_container_width=True, hide_index=True)
 
-            # Top scorer highlight
+            # Reorder columns to show ceiling stats prominently
+            col_order = ['Player', 'Team', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+                        'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
+            display_cols = [c for c in col_order if c in your_display.columns]
+            st.dataframe(your_display[display_cols], use_container_width=True, hide_index=True)
+
+            # Top scorer highlight with floor, ceiling, and max stats
             top_scorer = your_predictions.loc[your_predictions['Proj PTS'].idxmax()]
-            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} with {top_scorer['Proj PTS']:.1f} pts")
+            floor_pts = top_scorer.get('Floor PTS', top_scorer['Proj PTS'] * 0.5)
+            ceiling_pts = top_scorer.get('Ceiling PTS', top_scorer['Proj PTS'])
+            max_pts = top_scorer.get('Max PTS', top_scorer['Proj PTS'])
+            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} — Floor: {floor_pts:.1f} | Proj: {top_scorer['Proj PTS']:.1f} | Ceiling: {ceiling_pts:.1f} | Max: {max_pts:.1f} pts")
         else:
             st.warning("Could not generate predictions for your team")
 
@@ -5116,10 +5215,18 @@ def predictive_model_page():
             opp_display = opp_predictions.sort_values('Proj PTS', ascending=False).round(1)
             opp_display['TS%'] = opp_display['TS%'].apply(lambda x: f"{x:.1f}%")
             opp_display['TOV%'] = opp_display['TOV%'].apply(lambda x: f"{x:.1f}%")
-            st.dataframe(opp_display, use_container_width=True, hide_index=True)
+
+            # Reorder columns to show ceiling stats prominently
+            col_order = ['Player', 'Team', 'Floor PTS', 'Proj PTS', 'Ceiling PTS', 'Max PTS', 'Proj REB', 'Proj AST',
+                        'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
+            display_cols = [c for c in col_order if c in opp_display.columns]
+            st.dataframe(opp_display[display_cols], use_container_width=True, hide_index=True)
 
             opp_top = opp_predictions.loc[opp_predictions['Proj PTS'].idxmax()]
-            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} with {opp_top['Proj PTS']:.1f} pts")
+            opp_floor = opp_top.get('Floor PTS', opp_top['Proj PTS'] * 0.5)
+            opp_ceiling = opp_top.get('Ceiling PTS', opp_top['Proj PTS'])
+            opp_max = opp_top.get('Max PTS', opp_top['Proj PTS'])
+            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} — Floor: {opp_floor:.1f} | Proj: {opp_top['Proj PTS']:.1f} | Ceiling: {opp_ceiling:.1f} | Max: {opp_max:.1f} pts")
         else:
             st.warning("Could not generate predictions for opponent")
 
