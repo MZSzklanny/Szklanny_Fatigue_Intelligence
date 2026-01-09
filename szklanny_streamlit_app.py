@@ -5063,14 +5063,22 @@ def predictive_model_page():
                         elif hot_hand_mult < 0.98:
                             hot_hand_str = f"❄️{(hot_hand_mult-1)*100:.0f}%"
 
+                        # Calculate final Proj PTS first
+                        final_proj_pts = pred.get('total_pts', 0) * combined_adj
+
+                        # 90th percentile must ALWAYS be higher than projection
+                        # Take the max of: historical 90th (adjusted) OR projection * 1.15
+                        raw_90th = ceiling_pts_90 * (0.7 + 0.3 * combined_adj)
+                        final_90th = max(raw_90th, final_proj_pts * 1.15)
+
                         # Base prediction with floor, ceiling, and max stats (rest + hot hand adjusted)
                         base_pred = {
                             'Player': player,
                             'Team': team_name,
                             'Floor PTS': floor_pts_10 * (0.5 + 0.5 * combined_adj),  # Floor adjusts less
-                            'Proj PTS': pred.get('total_pts', 0) * combined_adj,
-                            '90th Pctile': ceiling_pts_90 * (0.7 + 0.3 * combined_adj),  # 90th percentile
-                            'Max PTS': max_pts,  # Max stays same (historical best)
+                            'Proj PTS': final_proj_pts,
+                            '90th Pctile': final_90th,  # Always >= Proj PTS * 1.15
+                            'Max PTS': max(max_pts, final_90th),  # Max should be >= 90th
                             'Proj REB': avg_reb * combined_adj,
                             'Proj AST': avg_ast * combined_adj,
                             'Proj STL': avg_stl * combined_adj,
