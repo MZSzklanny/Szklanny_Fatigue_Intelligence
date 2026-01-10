@@ -213,6 +213,14 @@ def pull_new_games():
         game_info = cdn_data.get('game', {})
         game_records = []
 
+        # Extract final game scores
+        home_team_info = game_info.get('homeTeam', {})
+        away_team_info = game_info.get('awayTeam', {})
+        home_team = home_team_info.get('teamTricode', '')
+        away_team = away_team_info.get('teamTricode', '')
+        home_score = home_team_info.get('score', 0)
+        away_score = away_team_info.get('score', 0)
+
         for team_key in ['homeTeam', 'awayTeam']:
             team_data = game_info.get(team_key, {})
             team_abbrev = team_data.get('teamTricode', '')
@@ -254,7 +262,11 @@ def pull_new_games():
                             'minutes': minutes,
                             'team': team_abbrev,
                             'win_loss': win_loss,
-                            'dataset': f'{team_abbrev} {CURRENT_SEASON}'
+                            'dataset': f'{team_abbrev} {CURRENT_SEASON}',
+                            'home_team': home_team,
+                            'away_team': away_team,
+                            'home_score': home_score,
+                            'away_score': away_score
                         })
 
         all_data.extend(game_records)

@@ -44,15 +44,15 @@
     "recent_3_total": 183.33333333333334
   },
   "MIA_vs_MIN": {
-    "games_played": 8,
+    "games_played": 9,
     "team1": "MIA",
     "team2": "MIN",
-    "team1_avg_pts": 93.25,
-    "team2_avg_pts": 94.875,
+    "team1_avg_pts": 92.0,
+    "team2_avg_pts": 95.88888888888889,
     "team1_wins": 2,
-    "team2_wins": 6,
-    "avg_total": 188.125,
-    "recent_3_total": 185.0
+    "team2_wins": 7,
+    "avg_total": 187.88888888888889,
+    "recent_3_total": 193.0
   },
   "LAL_vs_MIN": {
     "games_played": 23,
@@ -154,15 +154,15 @@
     "recent_3_total": 196.66666666666666
   },
   "DAL_vs_UTA": {
-    "games_played": 15,
+    "games_played": 16,
     "team1": "DAL",
     "team2": "UTA",
-    "team1_avg_pts": 96.26666666666667,
-    "team2_avg_pts": 90.06666666666666,
+    "team1_avg_pts": 96.6875,
+    "team2_avg_pts": 91.125,
     "team1_wins": 10,
-    "team2_wins": 5,
-    "avg_total": 186.33333333333334,
-    "recent_3_total": 187.33333333333334
+    "team2_wins": 6,
+    "avg_total": 187.8125,
+    "recent_3_total": 199.33333333333334
   },
   "DAL_vs_DEN": {
     "games_played": 15,
@@ -253,15 +253,15 @@
     "recent_3_total": 189.0
   },
   "DAL_vs_SAC": {
-    "games_played": 13,
+    "games_played": 14,
     "team1": "DAL",
     "team2": "SAC",
-    "team1_avg_pts": 96.61538461538461,
-    "team2_avg_pts": 99.61538461538461,
+    "team1_avg_pts": 95.85714285714286,
+    "team2_avg_pts": 98.71428571428571,
     "team1_wins": 6,
-    "team2_wins": 7,
-    "avg_total": 196.23076923076923,
-    "recent_3_total": 192.66666666666666
+    "team2_wins": 8,
+    "avg_total": 194.57142857142858,
+    "recent_3_total": 188.0
   },
   "ATL_vs_DAL": {
     "games_played": 8,
@@ -429,15 +429,15 @@
     "recent_3_total": 170.0
   },
   "CHA_vs_TOR": {
-    "games_played": 17,
+    "games_played": 18,
     "team1": "CHA",
     "team2": "TOR",
-    "team1_avg_pts": 93.23529411764706,
-    "team2_avg_pts": 99.70588235294117,
+    "team1_avg_pts": 92.38888888888889,
+    "team2_avg_pts": 98.77777777777777,
     "team1_wins": 4,
-    "team2_wins": 13,
-    "avg_total": 192.94117647058823,
-    "recent_3_total": 178.33333333333334
+    "team2_wins": 14,
+    "avg_total": 191.16666666666666,
+    "recent_3_total": 171.33333333333334
   },
   "CHI_vs_TOR": {
     "games_played": 14,
@@ -528,15 +528,15 @@
     "recent_3_total": 185.0
   },
   "GSW_vs_MIL": {
-    "games_played": 8,
+    "games_played": 9,
     "team1": "GSW",
     "team2": "MIL",
-    "team1_avg_pts": 97.25,
-    "team2_avg_pts": 97.625,
+    "team1_avg_pts": 98.22222222222223,
+    "team2_avg_pts": 98.55555555555556,
     "team1_wins": 5,
     "team2_wins": 3,
-    "avg_total": 194.875,
-    "recent_3_total": 177.33333333333334
+    "avg_total": 196.77777777777777,
+    "recent_3_total": 187.66666666666666
   },
   "MIL_vs_UTA": {
     "games_played": 8,
@@ -792,15 +792,15 @@
     "recent_3_total": 192.33333333333334
   },
   "ATL_vs_TOR": {
-    "games_played": 14,
+    "games_played": 15,
     "team1": "ATL",
     "team2": "TOR",
-    "team1_avg_pts": 94.14285714285714,
-    "team2_avg_pts": 98.71428571428571,
+    "team1_avg_pts": 93.33333333333333,
+    "team2_avg_pts": 99.2,
     "team1_wins": 3,
-    "team2_wins": 11,
-    "avg_total": 192.85714285714286,
-    "recent_3_total": 190.66666666666666
+    "team2_wins": 12,
+    "avg_total": 192.53333333333333,
+    "recent_3_total": 186.66666666666666
   },
   "ATL_vs_NYK": {
     "games_played": 18,
@@ -1012,15 +1012,15 @@
     "recent_3_total": 206.66666666666666
   },
   "ATL_vs_NOP": {
-    "games_played": 9,
+    "games_played": 10,
     "team1": "ATL",
     "team2": "NOP",
-    "team1_avg_pts": 101.66666666666667,
-    "team2_avg_pts": 93.0,
-    "team1_wins": 6,
+    "team1_avg_pts": 102.1,
+    "team2_avg_pts": 92.1,
+    "team1_wins": 7,
     "team2_wins": 3,
-    "avg_total": 194.66666666666666,
-    "recent_3_total": 199.0
+    "avg_total": 194.2,
+    "recent_3_total": 192.66666666666666
   },
   "ATL_vs_SAS": {
     "games_played": 8,
@@ -1144,15 +1144,15 @@
     "recent_3_total": 211.33333333333334
   },
   "ORL_vs_WAS": {
-    "games_played": 13,
+    "games_played": 14,
     "team1": "ORL",
     "team2": "WAS",
-    "team1_avg_pts": 97.15384615384616,
-    "team2_avg_pts": 95.6923076923077,
-    "team1_wins": 7,
+    "team1_avg_pts": 97.07142857142857,
+    "team2_avg_pts": 95.21428571428571,
+    "team1_wins": 8,
     "team2_wins": 6,
-    "avg_total": 192.84615384615384,
-    "recent_3_total": 189.33333333333334
+    "avg_total": 192.28571428571428,
+    "recent_3_total": 184.33333333333334
   },
   "NYK_vs_WAS": {
     "games_played": 17,
@@ -1166,15 +1166,15 @@
     "recent_3_total": 189.66666666666666
   },
   "PHI_vs_WAS": {
-    "games_played": 16,
+    "games_played": 17,
     "team1": "PHI",
     "team2": "WAS",
-    "team1_avg_pts": 101.125,
-    "team2_avg_pts": 92.1875,
-    "team1_wins": 10,
+    "team1_avg_pts": 101.29411764705883,
+    "team2_avg_pts": 92.58823529411765,
+    "team1_wins": 11,
     "team2_wins": 6,
-    "avg_total": 193.3125,
-    "recent_3_total": 195.33333333333334
+    "avg_total": 193.88235294117646,
+    "recent_3_total": 205.66666666666666
   },
   "SAC_vs_WAS": {
     "games_played": 7,
@@ -1309,15 +1309,15 @@
     "recent_3_total": 188.66666666666666
   },
   "DET_vs_NYK": {
-    "games_played": 23,
+    "games_played": 24,
     "team1": "DET",
     "team2": "NYK",
-    "team1_avg_pts": 85.30434782608695,
-    "team2_avg_pts": 97.3913043478261,
-    "team1_wins": 5,
+    "team1_avg_pts": 86.33333333333333,
+    "team2_avg_pts": 96.54166666666667,
+    "team1_wins": 6,
     "team2_wins": 17,
-    "avg_total": 182.69565217391303,
-    "recent_3_total": 168.66666666666666
+    "avg_total": 182.875,
+    "recent_3_total": 177.0
   },
   "DET_vs_GSW": {
     "games_played": 7,
@@ -1419,15 +1419,15 @@
     "recent_3_total": 199.66666666666666
   },
   "BKN_vs_ORL": {
-    "games_played": 13,
+    "games_played": 14,
     "team1": "BKN",
     "team2": "ORL",
-    "team1_avg_pts": 86.92307692307692,
-    "team2_avg_pts": 90.07692307692308,
+    "team1_avg_pts": 87.07142857142857,
+    "team2_avg_pts": 90.14285714285714,
     "team1_wins": 3,
-    "team2_wins": 10,
-    "avg_total": 177.0,
-    "recent_3_total": 159.66666666666666
+    "team2_wins": 11,
+    "avg_total": 177.21428571428572,
+    "recent_3_total": 172.0
   },
   "NYK_vs_ORL": {
     "games_played": 18,
@@ -1496,15 +1496,15 @@
     "recent_3_total": 179.33333333333334
   },
   "DEN_vs_PHI": {
-    "games_played": 6,
+    "games_played": 7,
     "team1": "DEN",
     "team2": "PHI",
-    "team1_avg_pts": 105.16666666666667,
-    "team2_avg_pts": 101.0,
+    "team1_avg_pts": 105.0,
+    "team2_avg_pts": 102.14285714285714,
     "team1_wins": 4,
-    "team2_wins": 2,
-    "avg_total": 206.16666666666666,
-    "recent_3_total": 218.33333333333334
+    "team2_wins": 3,
+    "avg_total": 207.14285714285714,
+    "recent_3_total": 225.66666666666666
   },
   "DEN_vs_LAC": {
     "games_played": 23,
@@ -1540,15 +1540,15 @@
     "recent_3_total": 204.0
   },
   "BOS_vs_DEN": {
-    "games_played": 9,
+    "games_played": 10,
     "team1": "BOS",
     "team2": "DEN",
-    "team1_avg_pts": 96.66666666666667,
-    "team2_avg_pts": 89.33333333333333,
-    "team1_wins": 6,
+    "team1_avg_pts": 97.1,
+    "team2_avg_pts": 90.2,
+    "team1_wins": 7,
     "team2_wins": 3,
-    "avg_total": 186.0,
-    "recent_3_total": 188.0
+    "avg_total": 187.3,
+    "recent_3_total": 191.66666666666666
   },
   "DEN_vs_GSW": {
     "games_played": 14,
@@ -1782,15 +1782,15 @@
     "recent_3_total": 182.33333333333334
   },
   "CLE_vs_IND": {
-    "games_played": 25,
+    "games_played": 26,
     "team1": "CLE",
     "team2": "IND",
-    "team1_avg_pts": 94.8,
-    "team2_avg_pts": 97.08,
-    "team1_wins": 10,
+    "team1_avg_pts": 95.3076923076923,
+    "team2_avg_pts": 97.26923076923077,
+    "team1_wins": 11,
     "team2_wins": 14,
-    "avg_total": 191.88,
-    "recent_3_total": 188.66666666666666
+    "avg_total": 192.57692307692307,
+    "recent_3_total": 200.0
   },
   "IND_vs_PHI": {
     "games_played": 13,
@@ -1914,15 +1914,15 @@
     "recent_3_total": 176.33333333333334
   },
   "CHA_vs_IND": {
-    "games_played": 16,
+    "games_played": 17,
     "team1": "CHA",
     "team2": "IND",
-    "team1_avg_pts": 93.3125,
-    "team2_avg_pts": 98.5625,
+    "team1_avg_pts": 93.3529411764706,
+    "team2_avg_pts": 98.29411764705883,
     "team1_wins": 6,
     "team2_wins": 10,
-    "avg_total": 191.875,
-    "recent_3_total": 200.33333333333334
+    "avg_total": 191.64705882352942,
+    "recent_3_total": 199.66666666666666
   },
   "IND_vs_MEM": {
     "games_played": 10,
@@ -2090,15 +2090,15 @@
     "recent_3_total": 198.0
   },
   "HOU_vs_PHX": {
-    "games_played": 14,
+    "games_played": 15,
     "team1": "HOU",
     "team2": "PHX",
-    "team1_avg_pts": 95.64285714285714,
-    "team2_avg_pts": 93.0,
+    "team1_avg_pts": 94.93333333333334,
+    "team2_avg_pts": 92.66666666666667,
     "team1_wins": 8,
-    "team2_wins": 6,
-    "avg_total": 188.64285714285714,
-    "recent_3_total": 195.0
+    "team2_wins": 7,
+    "avg_total": 187.6,
+    "recent_3_total": 178.0
   },
   "HOU_vs_OKC": {
     "games_played": 18,
@@ -2134,15 +2134,15 @@
     "recent_3_total": 204.66666666666666
   },
   "HOU_vs_POR": {
-    "games_played": 13,
+    "games_played": 14,
     "team1": "HOU",
     "team2": "POR",
-    "team1_avg_pts": 96.23076923076923,
-    "team2_avg_pts": 94.23076923076923,
+    "team1_avg_pts": 95.21428571428571,
+    "team2_avg_pts": 93.5,
     "team1_wins": 6,
-    "team2_wins": 7,
-    "avg_total": 190.46153846153845,
-    "recent_3_total": 192.66666666666666
+    "team2_wins": 8,
+    "avg_total": 188.71428571428572,
+    "recent_3_total": 195.33333333333334
   },
   "HOU_vs_SAC": {
     "games_played": 12,
@@ -2321,15 +2321,15 @@
     "recent_3_total": 193.33333333333334
   },
   "BOS_vs_CHI": {
-    "games_played": 13,
+    "games_played": 14,
     "team1": "BOS",
     "team2": "CHI",
-    "team1_avg_pts": 98.07692307692308,
-    "team2_avg_pts": 98.46153846153847,
-    "team1_wins": 6,
+    "team1_avg_pts": 98.5,
+    "team2_avg_pts": 98.0,
+    "team1_wins": 7,
     "team2_wins": 7,
-    "avg_total": 196.53846153846155,
-    "recent_3_total": 193.66666666666666
+    "avg_total": 196.5,
+    "recent_3_total": 194.66666666666666
   },
   "BOS_vs_SAS": {
     "games_played": 6,
@@ -2442,15 +2442,15 @@
     "recent_3_total": 200.66666666666666
   },
   "CHA_vs_OKC": {
-    "games_played": 12,
+    "games_played": 13,
     "team1": "CHA",
     "team2": "OKC",
-    "team1_avg_pts": 95.08333333333333,
-    "team2_avg_pts": 102.25,
-    "team1_wins": 4,
+    "team1_avg_pts": 95.53846153846153,
+    "team2_avg_pts": 100.46153846153847,
+    "team1_wins": 5,
     "team2_wins": 8,
-    "avg_total": 197.33333333333334,
-    "recent_3_total": 198.33333333333334
+    "avg_total": 196.0,
+    "recent_3_total": 188.66666666666666
   },
   "DET_vs_OKC": {
     "games_played": 8,
@@ -2640,15 +2640,15 @@
     "recent_3_total": 186.0
   },
   "OKC_vs_UTA": {
-    "games_played": 16,
+    "games_played": 17,
     "team1": "OKC",
     "team2": "UTA",
-    "team1_avg_pts": 104.1875,
-    "team2_avg_pts": 93.75,
+    "team1_avg_pts": 103.6470588235294,
+    "team2_avg_pts": 94.6470588235294,
     "team1_wins": 11,
-    "team2_wins": 5,
-    "avg_total": 197.9375,
-    "recent_3_total": 221.0
+    "team2_wins": 6,
+    "avg_total": 198.2941176470588,
+    "recent_3_total": 212.0
   },
   "OKC_vs_PHI": {
     "games_played": 9,
@@ -2739,15 +2739,15 @@
     "recent_3_total": 182.66666666666666
   },
   "MEM_vs_PHX": {
-    "games_played": 12,
+    "games_played": 13,
     "team1": "MEM",
     "team2": "PHX",
-    "team1_avg_pts": 96.33333333333333,
-    "team2_avg_pts": 99.83333333333333,
+    "team1_avg_pts": 95.84615384615384,
+    "team2_avg_pts": 100.76923076923077,
     "team1_wins": 5,
-    "team2_wins": 6,
-    "avg_total": 196.16666666666666,
-    "recent_3_total": 217.0
+    "team2_wins": 7,
+    "avg_total": 196.6153846153846,
+    "recent_3_total": 200.66666666666666
   },
   "PHX_vs_POR": {
     "games_played": 12,
@@ -2838,15 +2838,15 @@
     "recent_3_total": 191.66666666666666
   },
   "POR_vs_UTA": {
-    "games_played": 15,
+    "games_played": 16,
     "team1": "POR",
     "team2": "UTA",
-    "team1_avg_pts": 98.13333333333334,
-    "team2_avg_pts": 97.06666666666666,
-    "team1_wins": 8,
+    "team1_avg_pts": 99.3125,
+    "team2_avg_pts": 97.4375,
+    "team1_wins": 9,
     "team2_wins": 6,
-    "avg_total": 195.2,
-    "recent_3_total": 208.33333333333334
+    "avg_total": 196.75,
+    "recent_3_total": 207.66666666666666
   },
   "CHA_vs_UTA": {
     "games_played": 9,
@@ -3058,15 +3058,15 @@
     "recent_3_total": 188.66666666666666
   },
   "CHI_vs_DET": {
-    "games_played": 16,
+    "games_played": 17,
     "team1": "CHI",
     "team2": "DET",
-    "team1_avg_pts": 93.5,
-    "team2_avg_pts": 89.6875,
+    "team1_avg_pts": 93.11764705882354,
+    "team2_avg_pts": 90.41176470588235,
     "team1_wins": 11,
-    "team2_wins": 5,
-    "avg_total": 183.1875,
-    "recent_3_total": 190.66666666666666
+    "team2_wins": 6,
+    "avg_total": 183.52941176470588,
+    "recent_3_total": 192.66666666666666
   },
   "CHI_vs_MEM": {
     "games_played": 9,
@@ -3278,15 +3278,15 @@
     "recent_3_total": 175.33333333333334
   },
   "LAL_vs_NOP": {
-    "games_played": 15,
+    "games_played": 16,
     "team1": "LAL",
     "team2": "NOP",
-    "team1_avg_pts": 98.93333333333334,
-    "team2_avg_pts": 95.93333333333334,
-    "team1_wins": 10,
+    "team1_avg_pts": 98.8125,
+    "team2_avg_pts": 95.5625,
+    "team1_wins": 11,
     "team2_wins": 5,
-    "avg_total": 194.86666666666667,
-    "recent_3_total": 194.66666666666666
+    "avg_total": 194.375,
+    "recent_3_total": 193.0
   },
   "LAL_vs_TOR": {
     "games_played": 8,
@@ -3388,15 +3388,15 @@
     "recent_3_total": 207.0
   },
   "GSW_vs_LAC": {
-    "games_played": 15,
+    "games_played": 16,
     "team1": "GSW",
     "team2": "LAC",
-    "team1_avg_pts": 95.4,
-    "team2_avg_pts": 90.53333333333333,
+    "team1_avg_pts": 94.4375,
+    "team2_avg_pts": 90.125,
     "team1_wins": 11,
-    "team2_wins": 4,
-    "avg_total": 185.93333333333334,
-    "recent_3_total": 186.33333333333334
+    "team2_wins": 5,
+    "avg_total": 184.5625,
+    "recent_3_total": 170.66666666666666
   },
   "GSW_vs_SAC": {
     "games_played": 25,
@@ -3531,15 +3531,15 @@
     "recent_3_total": 192.0
   },
   "LAC_vs_NYK": {
-    "games_played": 6,
+    "games_played": 7,
     "team1": "LAC",
     "team2": "NYK",
-    "team1_avg_pts": 97.33333333333333,
-    "team2_avg_pts": 90.66666666666667,
+    "team1_avg_pts": 97.0,
+    "team2_avg_pts": 93.14285714285714,
     "team1_wins": 4,
-    "team2_wins": 2,
-    "avg_total": 188.0,
-    "recent_3_total": 178.66666666666666
+    "team2_wins": 3,
+    "avg_total": 190.14285714285714,
+    "recent_3_total": 191.33333333333334
   },
   "MIA_vs_NYK": {
     "games_played": 22,
@@ -3982,15 +3982,15 @@
     "recent_3_total": 188.66666666666666
   },
   "LAL_vs_SAS": {
-    "games_played": 15,
+    "games_played": 16,
     "team1": "LAL",
     "team2": "SAS",
-    "team1_avg_pts": 100.13333333333334,
-    "team2_avg_pts": 96.73333333333333,
+    "team1_avg_pts": 98.6875,
+    "team2_avg_pts": 95.9375,
     "team1_wins": 8,
-    "team2_wins": 7,
-    "avg_total": 196.86666666666667,
-    "recent_3_total": 192.66666666666666
+    "team2_wins": 8,
+    "avg_total": 194.625,
+    "recent_3_total": 178.33333333333334
   },
   "CLE_vs_LAL": {
     "games_played": 8,
@@ -4488,15 +4488,15 @@
     "recent_3_total": 192.66666666666666
   },
   "CLE_vs_MIN": {
-    "games_played": 8,
+    "games_played": 9,
     "team1": "CLE",
     "team2": "MIN",
-    "team1_avg_pts": 89.75,
-    "team2_avg_pts": 94.875,
+    "team1_avg_pts": 91.66666666666667,
+    "team2_avg_pts": 97.88888888888889,
     "team1_wins": 2,
-    "team2_wins": 5,
-    "avg_total": 184.625,
-    "recent_3_total": 190.0
+    "team2_wins": 6,
+    "avg_total": 189.55555555555554,
+    "recent_3_total": 209.33333333333334
   },
   "CLE_vs_PHX": {
     "games_played": 9,
@@ -4730,15 +4730,15 @@
     "recent_3_total": 188.33333333333334
   },
   "MEM_vs_SAS": {
-    "games_played": 16,
+    "games_played": 17,
     "team1": "MEM",
     "team2": "SAS",
-    "team1_avg_pts": 106.0625,
-    "team2_avg_pts": 96.75,
-    "team1_wins": 11,
+    "team1_avg_pts": 105.47058823529412,
+    "team2_avg_pts": 96.3529411764706,
+    "team1_wins": 12,
     "team2_wins": 5,
-    "avg_total": 202.8125,
-    "recent_3_total": 207.33333333333334
+    "avg_total": 201.8235294117647,
+    "recent_3_total": 194.33333333333334
   },
   "CLE_vs_SAS": {
     "games_played": 8,

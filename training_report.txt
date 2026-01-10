@@ -1,0 +1,63 @@
+
+NBA Model Training Report
+========================
+Generated: 2026-01-09 17:47:06
+
+DATA SUMMARY
+------------
+Total game records: 115,137
+Unique players: 1,286
+Date range: 2020-12-11 to 2026-01-08
+
+Seasons included:
+season
+2020-21    25370
+2021-22     3452
+2022-23    28299
+2023-24    13142
+2024-25    30609
+2025-26    14265
+
+MATCHUP DATA
+------------
+Team vs Team matchups tracked: 435
+Player vs Team combinations: 9,054
+
+MODEL TRAINING
+--------------
+Training sequences: 92,960
+Test sequences: 16,405
+Sequence length: 5 games
+
+Features used: 22
+total_pts, total_trb, total_ast, total_stl, total_blk, total_tov, total_pf, total_fgm, total_fga, total_minutes, fg_pct, ts_pct, game_score, usage_proxy, is_win, spm, q4_pts_change, is_home, point_diff, game_pace, team_final_score, opp_final_score
+
+Target outputs: 6
+total_pts, total_fga, ts_pct, tov_rate, game_score, spm
+
+Model Architecture:
+- LSTM(128) -> BatchNorm -> Dropout(0.3)
+- LSTM(64) -> BatchNorm -> Dropout(0.3)
+- Dense(64, relu) -> Dense(32, relu) -> Dense(6)
+
+RESULTS
+-------
+Test Loss (Huber): 0.2565
+Test MAE: 0.5539
+
+Per-target MAE:
+  total_pts: 4.22
+  total_fga: 2.88
+  ts_pct: 0.21
+  tov_rate: 0.10
+  game_score: 4.45
+  spm: 0.31
+
+FILES CREATED
+-------------
+- player_model_lstm.keras (trained model)
+- player_model_scalers.pkl (scalers)
+- team_matchup_stats.json (team vs team history)
+- player_vs_team_stats.pkl (player vs opponent history)
+- player_historical_stats.pkl (player career stats)
+- NBA_Training_Full_5Seasons.parquet (merged training data)
