@@ -3742,17 +3742,31 @@ def prepare_player_game_history(df, player_name):
     if player_df.empty:
         return pd.DataFrame()
 
-    # Aggregate to game level
-    game_agg = player_df.groupby(['game_date', 'game_id']).agg({
+    # Build aggregation dict - include score columns if they exist
+    agg_dict = {
         'pts': 'sum', 'trb': 'sum', 'ast': 'sum', 'stl': 'sum', 'blk': 'sum',
         'tov': 'sum', 'pf': 'sum', 'fgm': 'sum', 'fga': 'sum', 'minutes': 'sum',
         'win_loss': 'first', 'team': 'first'
-    }).reset_index()
+    }
 
-    # Rename columns
-    game_agg.columns = ['game_date', 'game_id', 'total_pts', 'total_trb', 'total_ast',
-                        'total_stl', 'total_blk', 'total_tov', 'total_pf', 'total_fgm',
-                        'total_fga', 'total_minutes', 'win_loss', 'team']
+    # Add score columns if they exist
+    score_cols = ['home_team', 'away_team', 'home_score', 'away_score']
+    has_score_cols = all(col in player_df.columns for col in score_cols)
+    if has_score_cols:
+        for col in score_cols:
+            agg_dict[col] = 'first'
+
+    # Aggregate to game level
+    game_agg = player_df.groupby(['game_date', 'game_id']).agg(agg_dict).reset_index()
+
+    # Rename base columns
+    base_rename = {
+        'pts': 'total_pts', 'trb': 'total_trb', 'ast': 'total_ast',
+        'stl': 'total_stl', 'blk': 'total_blk', 'tov': 'total_tov',
+        'pf': 'total_pf', 'fgm': 'total_fgm', 'fga': 'total_fga',
+        'minutes': 'total_minutes'
+    }
+    game_agg = game_agg.rename(columns=base_rename)
 
     # Calculate derived features
     game_agg['fg_pct'] = np.where(game_agg['total_fga'] > 0,
@@ -3769,6 +3783,41 @@ def prepare_player_game_history(df, player_name):
     game_agg['usage_proxy'] = np.where(game_agg['total_minutes'] > 0,
                                         game_agg['total_fga'] / game_agg['total_minutes'] * 12, 0)
     game_agg['is_win'] = (game_agg['win_loss'] == 'W').astype(int)
+
+    # SPM approximation (simplified - based on points efficiency)
+    game_agg['spm'] = (game_agg['total_pts'] * 0.8 + game_agg['total_trb'] * 0.4 +
+                       game_agg['total_ast'] * 0.6 + game_agg['total_stl'] * 1.0 +
+                       game_agg['total_blk'] * 0.8 - game_agg['total_tov'] * 0.8 -
+                       (game_agg['total_fga'] - game_agg['total_fgm']) * 0.3) / game_agg['total_minutes'].replace(0, 1)
+    game_agg['q4_pts_change'] = 0  # Would need quarter-level calc, default to 0
+
+    # Add score-based features if score columns exist
+    if has_score_cols and 'home_team' in game_agg.columns:
+        game_agg['is_home'] = (game_agg['team'] == game_agg['home_team']).astype(int)
+        game_agg['point_diff'] = np.where(
+            game_agg['team'] == game_agg['home_team'],
+            game_agg['home_score'] - game_agg['away_score'],
+            game_agg['away_score'] - game_agg['home_score']
+        )
+        game_agg['game_pace'] = game_agg['home_score'] + game_agg['away_score']
+        game_agg['team_final_score'] = np.where(
+            game_agg['team'] == game_agg['home_team'],
+            game_agg['home_score'],
+            game_agg['away_score']
+        )
+        game_agg['opp_final_score'] = np.where(
+            game_agg['team'] == game_agg['home_team'],
+            game_agg['away_score'],
+            game_agg['home_score']
+        )
+    else:
+        # Default values if score columns don't exist
+        game_agg['is_home'] = 0
+        game_agg['point_diff'] = 0
+        game_agg['game_pace'] = 220  # League average
+        game_agg['team_final_score'] = 110
+        game_agg['opp_final_score'] = 110
+
     game_agg['is_b2b'] = False
     game_agg['days_rest'] = 2
     game_agg['age'] = 27
