@@ -4720,6 +4720,11 @@ def apply_minutes_boost_to_prediction(prediction, minutes_multiplier, base_minut
         raw_90th = prediction['90th Pctile'] * (1 + boost * 0.50 * efficiency_decay)
         # 90th Pctile must always be >= Proj PTS * 1.15
         adjusted['90th Pctile'] = max(raw_90th, adjusted.get('Proj PTS', 0) * 1.15)
+    if '90th Odds' in adjusted:
+        # More minutes = slightly higher odds of ceiling game (more opportunities)
+        adjusted['90th Odds'] = min(prediction['90th Odds'] * (1 + boost * 0.3), 45)
+    if '90th Odds CI' in adjusted:
+        adjusted['90th Odds CI'] = prediction['90th Odds CI']  # Keep CI as-is
     if 'Max PTS' in adjusted:
         # Max must always be >= 90th Pctile
         adjusted['Max PTS'] = max(prediction['Max PTS'], adjusted.get('90th Pctile', 0))
@@ -5253,6 +5258,48 @@ def predictive_model_page():
                         raw_90th = ceiling_pts_90 * (0.7 + 0.3 * combined_adj)
                         final_90th = max(raw_90th, final_proj_pts * 1.15)
 
+                        # ==============================================
+                        # 90TH PERCENTILE ODDS CALCULATION
+                        # ==============================================
+                        # Calculate probability of reaching 90th percentile
+                        from scipy import stats as scipy_stats
+
+                        # Get historical standard deviation
+                        if pts_col in player_history.columns and len(player_history) >= 5:
+                            hist_std = player_history[pts_col].std()
+                        else:
+                            hist_std = final_proj_pts * 0.25  # Default 25% CV
+
+                        # Statistical method: P(X >= 90th) using normal distribution
+                        if hist_std > 0 and final_proj_pts > 0:
+                            z_score = (final_90th - final_proj_pts) / hist_std
+                            stat_odds = (1 - scipy_stats.norm.cdf(z_score)) * 100
+                        else:
+                            stat_odds = 10.0  # Default 10%
+
+                        # Hot hand adjustment: boost odds if player is hot
+                        hot_hand_odds_mult = 1.0
+                        if hot_hand_mult > 1.05:  # Hot player
+                            hot_hand_odds_mult = 1.0 + (hot_hand_mult - 1.0) * 2  # Double the hot hand effect
+                        elif hot_hand_mult < 0.95:  # Cold player
+                            hot_hand_odds_mult = 0.7  # Reduce odds by 30%
+
+                        stat_odds_adjusted = min(stat_odds * hot_hand_odds_mult, 50)  # Cap at 50%
+
+                        # Monte Carlo simulation (fast version - 200 simulations)
+                        np.random.seed(42)  # Reproducibility
+                        mc_samples = np.random.normal(final_proj_pts, hist_std, 200)
+                        mc_odds = (mc_samples >= final_90th).sum() / 200 * 100
+                        mc_odds_adjusted = min(mc_odds * hot_hand_odds_mult, 50)
+
+                        # Combined odds: weighted average (60% statistical, 40% MC)
+                        combined_odds = 0.6 * stat_odds_adjusted + 0.4 * mc_odds_adjusted
+                        combined_odds = max(2, min(combined_odds, 45))  # Bound between 2-45%
+
+                        # Confidence interval from MC
+                        mc_ci_low = max(0, mc_odds_adjusted - 5)
+                        mc_ci_high = min(50, mc_odds_adjusted + 5)
+
                         # Base prediction with floor, ceiling, and max stats (rest + hot hand adjusted)
                         base_pred = {
                             'Player': player,
@@ -5260,6 +5307,8 @@ def predictive_model_page():
                             'Floor PTS': floor_pts_10 * (0.5 + 0.5 * combined_adj),  # Floor adjusts less
                             'Proj PTS': final_proj_pts,
                             '90th Pctile': final_90th,  # Always >= Proj PTS * 1.15
+                            '90th Odds': combined_odds,  # Probability of reaching 90th percentile
+                            '90th Odds CI': f"{mc_ci_low:.0f}-{mc_ci_high:.0f}%",  # Confidence interval
                             'Max PTS': max(max_pts, final_90th),  # Max should be >= 90th
                             'Proj REB': avg_reb * combined_adj,
                             'Proj AST': avg_ast * combined_adj,
@@ -5602,18 +5651,25 @@ def predictive_model_page():
             your_display['TS%'] = your_display['TS%'].apply(lambda x: f"{x:.1f}%")
             your_display['TOV%'] = your_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
+            # Format 90th Pctile with odds as tooltip-style display
+            if '90th Odds' in your_display.columns:
+                your_display['90th Pctile'] = your_display.apply(
+                    lambda row: f"{row['90th Pctile']:.1f} 🎯{row['90th Odds']:.0f}%", axis=1
+                )
+
             # Reorder columns to show stats prominently
             col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', '90th Pctile', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
             display_cols = [c for c in col_order if c in your_display.columns]
             st.dataframe(your_display[display_cols], use_container_width=True, hide_index=True)
 
-            # Top scorer highlight with floor, 90th pctile, and max stats
+            # Top scorer highlight with floor, 90th pctile, odds, and max stats
             top_scorer = your_predictions.loc[your_predictions['Proj PTS'].idxmax()]
             floor_pts = top_scorer.get('Floor PTS', top_scorer['Proj PTS'] * 0.5)
             pctile_90 = top_scorer.get('90th Pctile', top_scorer['Proj PTS'])
+            odds_90 = top_scorer.get('90th Odds', 10)
             max_pts = top_scorer.get('Max PTS', top_scorer['Proj PTS'])
-            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} — Floor: {floor_pts:.1f} | Proj: {top_scorer['Proj PTS']:.1f} | 90th: {pctile_90:.1f} | Max: {max_pts:.1f} pts")
+            st.success(f"🌟 **Top Projected Scorer**: {top_scorer['Player']} — Floor: {floor_pts:.1f} | Proj: {top_scorer['Proj PTS']:.1f} | 90th: {pctile_90:.1f} (🎯{odds_90:.0f}%) | Max: {max_pts:.1f} pts")
         else:
             st.warning("Could not generate predictions for your team")
 
@@ -5624,6 +5680,12 @@ def predictive_model_page():
             opp_display['TS%'] = opp_display['TS%'].apply(lambda x: f"{x:.1f}%")
             opp_display['TOV%'] = opp_display['TOV%'].apply(lambda x: f"{x:.1f}%")
 
+            # Format 90th Pctile with odds as tooltip-style display
+            if '90th Odds' in opp_display.columns:
+                opp_display['90th Pctile'] = opp_display.apply(
+                    lambda row: f"{row['90th Pctile']:.1f} 🎯{row['90th Odds']:.0f}%", axis=1
+                )
+
             # Reorder columns to show stats prominently
             col_order = ['Player', 'Team', 'Hot Hand', 'Floor PTS', 'Proj PTS', '90th Pctile', 'Max PTS', 'Proj REB', 'Proj AST',
                         'Proj STL', 'Proj BLK', 'TS%', 'TOV%', 'Game Score', 'Rest Adj']
@@ -5633,8 +5695,9 @@ def predictive_model_page():
             opp_top = opp_predictions.loc[opp_predictions['Proj PTS'].idxmax()]
             opp_floor = opp_top.get('Floor PTS', opp_top['Proj PTS'] * 0.5)
             opp_90th = opp_top.get('90th Pctile', opp_top['Proj PTS'])
+            opp_odds_90 = opp_top.get('90th Odds', 10)
             opp_max = opp_top.get('Max PTS', opp_top['Proj PTS'])
-            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} — Floor: {opp_floor:.1f} | Proj: {opp_top['Proj PTS']:.1f} | 90th: {opp_90th:.1f} | Max: {opp_max:.1f} pts")
+            st.info(f"⚠️ **Opponent's Top Threat**: {opp_top['Player']} — Floor: {opp_floor:.1f} | Proj: {opp_top['Proj PTS']:.1f} | 90th: {opp_90th:.1f} (🎯{opp_odds_90:.0f}%) | Max: {opp_max:.1f} pts")
         else:
             st.warning("Could not generate predictions for opponent")
 
