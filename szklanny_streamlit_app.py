@@ -3672,15 +3672,25 @@ def load_neural_model():
     try:
         from sdis_neural_models import PlayerPerformanceModel
 
-        # Check current directory first (Streamlit Cloud), then local path
-        if os.path.exists("player_performance_model.pth"):
-            model_path = "player_performance_model.pth"
+        # Check for scalers file (required)
+        if os.path.exists("player_model_scalers.pkl"):
             scalers_path = "player_model_scalers.pkl"
+            base_dir = "."
         else:
-            model_path = os.path.join(DATA_DIR, "player_performance_model.pth")
             scalers_path = os.path.join(DATA_DIR, "player_model_scalers.pkl")
+            base_dir = DATA_DIR
 
-        if not os.path.exists(model_path) or not os.path.exists(scalers_path):
+        if not os.path.exists(scalers_path):
+            return None, None, None
+
+        # Check for v2 model first (enhanced), then legacy
+        v2_model_path = os.path.join(base_dir, "player_performance_model_v2.pth")
+        legacy_model_path = os.path.join(base_dir, "player_performance_model.pth")
+
+        use_enhanced = os.path.exists(v2_model_path)
+        use_legacy = os.path.exists(legacy_model_path) if not use_enhanced else False
+
+        if not use_enhanced and not use_legacy:
             return None, None, None
 
         # Load scalers
@@ -3689,11 +3699,6 @@ def load_neural_model():
         target_scaler = scalers['target_scaler']
         target_cols = scalers['target_cols']
         seq_features = scalers['seq_features']
-
-        # Build and load model
-        # Check if enhanced model exists (v2 with bidirectional LSTM)
-        enhanced_model_path = model_path.replace('.pth', '_v2.pth')
-        use_enhanced = os.path.exists(enhanced_model_path)
 
         if use_enhanced:
             # Enhanced v2 model: bidirectional LSTM, 128 hidden, layer norm
@@ -3707,7 +3712,7 @@ def load_neural_model():
                 dropout=0.2,
                 bidirectional=True  # Enhanced: bidirectional
             )
-            model.load_state_dict(torch.load(enhanced_model_path, weights_only=True))
+            model.load_state_dict(torch.load(v2_model_path, weights_only=True))
         else:
             # Legacy model: use PlayerPerformanceModelLegacy class
             from sdis_neural_models import PlayerPerformanceModelLegacy
@@ -3720,7 +3725,7 @@ def load_neural_model():
                 encoder_type='lstm',
                 dropout=0.2
             )
-            model.load_state_dict(torch.load(model_path, weights_only=True))
+            model.load_state_dict(torch.load(legacy_model_path, weights_only=True))
 
         model.eval()
 

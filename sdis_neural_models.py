@@ -97,8 +97,8 @@ class PlayerSequenceDataset(Dataset):
 
         print(f"Filtered to complete games (4+ quarters): {len(df):,} quarter-records")
 
-        # Game-level aggregations
-        game_agg = df.groupby(['player', 'game_date', 'game_id']).agg({
+        # Build aggregation dict - include score columns if they exist
+        agg_dict = {
             'pts': 'sum',
             'trb': 'sum',
             'ast': 'sum',
@@ -114,14 +114,26 @@ class PlayerSequenceDataset(Dataset):
             'is_b2b': 'first',
             'days_rest': 'first',
             'age': 'first'
-        }).reset_index()
+        }
 
-        # Rename for clarity
-        game_agg.columns = ['player', 'game_date', 'game_id',
-                          'total_pts', 'total_trb', 'total_ast', 'total_stl',
-                          'total_blk', 'total_tov', 'total_pf', 'total_fgm',
-                          'total_fga', 'total_minutes', 'team', 'win_loss',
-                          'is_b2b', 'days_rest', 'age']
+        # Add score columns if they exist
+        score_cols = ['home_team', 'away_team', 'home_score', 'away_score']
+        has_score_cols = all(col in df.columns for col in score_cols)
+        if has_score_cols:
+            for col in score_cols:
+                agg_dict[col] = 'first'
+
+        # Game-level aggregations
+        game_agg = df.groupby(['player', 'game_date', 'game_id']).agg(agg_dict).reset_index()
+
+        # Rename base columns
+        base_rename = {
+            'pts': 'total_pts', 'trb': 'total_trb', 'ast': 'total_ast',
+            'stl': 'total_stl', 'blk': 'total_blk', 'tov': 'total_tov',
+            'pf': 'total_pf', 'fgm': 'total_fgm', 'fga': 'total_fga',
+            'minutes': 'total_minutes'
+        }
+        game_agg = game_agg.rename(columns=base_rename)
 
         # Efficiency metrics
         game_agg['fg_pct'] = np.where(game_agg['total_fga'] > 0,
@@ -174,6 +186,44 @@ class PlayerSequenceDataset(Dataset):
             game_agg['q4_pts_change'] = 0
             game_agg['q4_fg_change'] = 0
 
+        # Add score-based features if score columns exist
+        if has_score_cols and 'home_team' in game_agg.columns:
+            # is_home: 1 if player's team is home, 0 if away
+            game_agg['is_home'] = (game_agg['team'] == game_agg['home_team']).astype(int)
+
+            # point_diff: positive = team won by this margin
+            game_agg['point_diff'] = np.where(
+                game_agg['team'] == game_agg['home_team'],
+                game_agg['home_score'] - game_agg['away_score'],
+                game_agg['away_score'] - game_agg['home_score']
+            )
+
+            # game_pace: total points in game (fast/slow indicator)
+            game_agg['game_pace'] = game_agg['home_score'] + game_agg['away_score']
+
+            # team_final_score: player's team's final score
+            game_agg['team_final_score'] = np.where(
+                game_agg['team'] == game_agg['home_team'],
+                game_agg['home_score'],
+                game_agg['away_score']
+            )
+
+            # opp_final_score: opponent's final score
+            game_agg['opp_final_score'] = np.where(
+                game_agg['team'] == game_agg['home_team'],
+                game_agg['away_score'],
+                game_agg['home_score']
+            )
+            print(f"Added score-based features: is_home, point_diff, game_pace, team_final_score, opp_final_score")
+        else:
+            # Default values if score columns don't exist
+            game_agg['is_home'] = 0
+            game_agg['point_diff'] = 0
+            game_agg['game_pace'] = 0
+            game_agg['team_final_score'] = 0
+            game_agg['opp_final_score'] = 0
+            print("Warning: Score columns not found, using default values for score-based features")
+
         self.game_df = game_agg
         self.quarter_df = df
 
@@ -218,7 +268,8 @@ class PlayerSequenceDataset(Dataset):
         self.seq_features = ['total_pts', 'total_trb', 'total_ast', 'total_stl',
                             'total_blk', 'total_tov', 'total_pf', 'total_fgm',
                             'total_fga', 'total_minutes', 'fg_pct', 'ts_pct',
-                            'game_score', 'usage_proxy', 'is_win', 'spm', 'q4_pts_change']
+                            'game_score', 'usage_proxy', 'is_win', 'spm', 'q4_pts_change',
+                            'is_home', 'point_diff', 'game_pace', 'team_final_score', 'opp_final_score']
 
         # Static features (for current game context)
         static_features = ['is_b2b', 'days_rest', 'age']
@@ -936,11 +987,12 @@ def predict_player_performance(model, player_history_df, static_features,
     """
     model.eval()
 
-    # Prepare sequence
+    # Prepare sequence - must match training features (22 total)
     seq_features = ['total_pts', 'total_trb', 'total_ast', 'total_stl',
                    'total_blk', 'total_tov', 'total_pf', 'total_fgm',
                    'total_fga', 'total_minutes', 'fg_pct', 'ts_pct',
-                   'game_score', 'usage_proxy', 'is_win']
+                   'game_score', 'usage_proxy', 'is_win', 'spm', 'q4_pts_change',
+                   'is_home', 'point_diff', 'game_pace', 'team_final_score', 'opp_final_score']
 
     # Get last N games
     recent = player_history_df.tail(sequence_length)
