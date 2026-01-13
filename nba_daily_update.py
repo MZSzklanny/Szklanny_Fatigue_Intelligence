@@ -401,6 +401,18 @@ def main():
         combined.to_excel(INJURIES_FILE, index=False)
         print(f"Injury data updated: {len(new_injuries)} new records")
 
+    # Generate CourtMind Twitter content
+    try:
+        from CourtMind.content_generator import generate_daily_content
+        print("\n[CourtMind] Generating daily Twitter content...")
+        posts = generate_daily_content()
+        if posts:
+            print(f"[CourtMind] Generated {len(posts)} posts ready for Twitter")
+    except ImportError:
+        print("[CourtMind] CourtMind module not found, skipping content generation")
+    except Exception as e:
+        print(f"[CourtMind] Warning: Content generation failed: {e}")
+
     print("\n" + "=" * 60)
     print(f"Daily update complete: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
