@@ -2,123 +2,271 @@
 SPRS - Szklanny Performance Resilience System
 ==============================================
 NBA Performance Analytics & Fatigue Management Platform
-Includes: Szklanny Performance Metric (SPM)
+
+This is the main Streamlit web application for the SDIS (Szklanny Decision
+Intelligence System). It provides an interactive dashboard for:
+
+1. PLAYER ANALYSIS:
+   - Quarter-by-quarter performance breakdown
+   - Fatigue detection using SPM (Szklanny Performance Metric)
+   - Back-to-back game impact analysis
+   - Historical trend visualization
+
+2. PREDICTIVE ANALYTICS:
+   - Neural network-based performance predictions
+   - Fatigue risk assessment using logistic regression
+   - Confidence intervals and uncertainty quantification
+
+3. TEAM MANAGEMENT:
+   - Cap Lab salary simulator
+   - Rest-day optimization recommendations
+   - Player comparison tools
+
+Key Metrics:
+- SPM (Szklanny Performance Metric): Measures late-game resilience
+  Positive = player maintains performance, Negative = fatigue-induced decline
+- SLFI (Szklanny Late-game Fatigue Index): Q4 performance vs Q1-Q3 baseline
+
+Data Sources:
+- NBA_Quarter_ALL_Combined.parquet: Quarter-level box score data
+- NBA_Injuries_Combined.xlsx: Injury history data
+- player_performance_model_v2.pth: Trained neural network model
+
 Run with: streamlit run szklanny_streamlit_app.py
 """
 
-import datetime
-import os
-import warnings
+# =============================================================================
+# IMPORTS - External Libraries
+# =============================================================================
+# Standard library imports
+import datetime  # Date/time operations for game scheduling
+import os        # File system operations for data loading
+import warnings  # Suppress unnecessary warnings
 
-import numpy as np
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import streamlit as st
-from plotly.subplots import make_subplots
-from scipy import stats
-# Optional imports for neural model (may not be available on Streamlit Cloud)
+# Data manipulation and numerical computing
+import numpy as np   # Numerical arrays and mathematical operations
+import pandas as pd  # DataFrames for structured data analysis
+
+# Visualization libraries
+import plotly.express as px        # High-level plotting API
+import plotly.graph_objects as go  # Low-level plotting for custom charts
+from plotly.subplots import make_subplots  # Multi-panel figures
+
+# Streamlit web framework
+import streamlit as st  # Main dashboard framework
+
+# Statistical analysis
+from scipy import stats  # t-tests, confidence intervals, distributions
+
+# =============================================================================
+# OPTIONAL IMPORTS - May not be available on Streamlit Cloud
+# =============================================================================
+# PyTorch for neural network inference (optional)
 try:
     import torch
-    TORCH_AVAILABLE = True
+    TORCH_AVAILABLE = True  # Neural model predictions available
 except ImportError:
-    TORCH_AVAILABLE = False
+    TORCH_AVAILABLE = False  # Fall back to simpler models
 
+# Joblib for loading pickled scikit-learn objects (scalers)
 try:
     import joblib
-    JOBLIB_AVAILABLE = True
+    JOBLIB_AVAILABLE = True  # Can load pre-trained scalers
 except ImportError:
-    JOBLIB_AVAILABLE = False
+    JOBLIB_AVAILABLE = False  # Must retrain or skip neural predictions
 
+# Suppress warnings for cleaner dashboard output
 warnings.filterwarnings('ignore')
 
 # =============================================================================
 # DATA DIRECTORY HELPER (works on local and Streamlit Cloud)
 # =============================================================================
+# The app needs to work both locally (Windows paths) and on Streamlit Cloud
+# (Linux filesystem, files in current directory). This helper auto-detects
+# the correct location for data files.
+
 def get_data_dir():
-    """Get the data directory - works on local and Streamlit Cloud."""
-    # Check current directory first (Streamlit Cloud)
+    """
+    Get the data directory path that works across deployment environments.
+
+    Streamlit Cloud deploys apps to Linux containers where files are in the
+    current working directory. Local development uses Windows paths.
+    This function checks multiple locations to find the data files.
+
+    Returns:
+        str: Path to directory containing NBA_Quarter_ALL_Combined.parquet/xlsx
+    """
+    # Check 1: Current directory (Streamlit Cloud deployment)
     if os.path.exists("NBA_Quarter_ALL_Combined.parquet") or os.path.exists("NBA_Quarter_ALL_Combined.xlsx"):
         return "."
-    # Check local Windows path
+
+    # Check 2: Local Windows development path (parquet preferred)
     if os.path.exists(r"C:\Users\user\NBA_Quarter_ALL_Combined.parquet"):
         return r"C:\Users\user"
+
+    # Check 3: Local Windows with Excel fallback
     if os.path.exists(r"C:\Users\user\NBA_Quarter_ALL_Combined.xlsx"):
         return r"C:\Users\user"
-    # Default to current directory
+
+    # Default: Current directory (will show error later if files missing)
     return "."
 
+# Global constant for data directory (computed once at startup)
 DATA_DIR = get_data_dir()
 
 # =============================================================================
 # LEAGUE BENCHMARKS (Research-based reference values)
 # =============================================================================
+# These thresholds are derived from historical NBA data analysis.
+# They define what constitutes "elite", "average", and "concerning" performance.
+# Used throughout the app to color-code metrics and generate recommendations.
+
 LEAGUE_BENCHMARKS = {
-    'avg_q4_fg_drop': -1.0,      # Modern average FG% drop Q1-3 avg → Q4
-    'elite_spm': 3.0,            # Top 10% SPM threshold (scaled -10 to +10)
-    'good_spm': 1.0,             # Above average resilience
-    'fatigue_spm': -3.0,         # Bottom 25% (fatigued) SPM threshold
-    'severe_fatigue_spm': -5.0,  # Severe fatigue concern
-    'min_games_reliable': 20,    # Minimum games for reliable metrics
-    'min_games_warning': 5,      # Minimum for any calculation
-    # Legacy keys for backward compatibility
-    'elite_slfi': 0.5,
-    'fatigue_slfi': -0.5,
+    # FG% Change Benchmarks (Q1-3 average → Q4)
+    # Most players see a slight decline in Q4 due to fatigue
+    'avg_q4_fg_drop': -1.0,      # Average FG% drop: -1% from early game to Q4
+
+    # SPM (Szklanny Performance Metric) Thresholds
+    # SPM is scaled roughly from -10 to +10
+    'elite_spm': 3.0,            # Top 10% - exceptional late-game performers
+    'good_spm': 1.0,             # Above average - maintains performance well
+    'fatigue_spm': -3.0,         # Bottom 25% - shows clear fatigue patterns
+    'severe_fatigue_spm': -5.0,  # Bottom 10% - serious fatigue concern
+
+    # Sample Size Requirements for Statistical Reliability
+    # Small samples lead to high variance estimates - we need enough games
+    'min_games_reliable': 20,    # Minimum for reliable/stable metrics
+    'min_games_warning': 5,      # Minimum for any calculation (with warning)
+
+    # Legacy SLFI thresholds (kept for backward compatibility)
+    # SLFI was the predecessor to SPM, used similar scale but different formula
+    'elite_slfi': 0.5,           # Old elite threshold
+    'fatigue_slfi': -0.5,        # Old fatigue threshold
 }
 
 
 # =============================================================================
 # STATISTICAL UTILITY FUNCTIONS
 # =============================================================================
+# These helper functions provide statistical analysis capabilities used
+# throughout the dashboard. They implement proper statistical methods
+# for small samples (t-distribution) and hypothesis testing.
 
 def compute_confidence_interval(data, confidence=0.95):
     """
     Compute confidence interval using t-distribution for small samples.
 
-    Returns: (mean, ci_lower, ci_upper)
+    Uses the t-distribution instead of normal distribution because:
+    - Small samples (n < 30) have more uncertainty in variance estimate
+    - t-distribution has heavier tails, giving wider (more conservative) CIs
+    - As n→∞, t-distribution approaches normal
+
+    Formula:
+        CI = mean ± t_critical × standard_error
+        where t_critical comes from t-distribution with n-1 degrees of freedom
+
+    Args:
+        data: Array-like of numerical values
+        confidence: Confidence level (0.95 = 95% CI by default)
+
+    Returns:
+        Tuple of (mean, ci_lower, ci_upper)
+        Returns (NaN, NaN, NaN) if insufficient data
     """
     data = np.array(data)
-    data = data[~np.isnan(data)]
+    data = data[~np.isnan(data)]  # Remove NaN values
     n = len(data)
-    if n < 2:
+
+    if n < 2:  # Need at least 2 points for standard error
         return np.nan, np.nan, np.nan
+
     mean = np.mean(data)
-    se = stats.sem(data)
+    se = stats.sem(data)  # Standard error of the mean = std / sqrt(n)
+
+    # stats.t.interval returns (lower, upper) bounds
+    # df = n-1 (degrees of freedom for sample variance)
     ci = stats.t.interval(confidence, n-1, loc=mean, scale=se)
     return mean, ci[0], ci[1]
 
 
 def compute_q1_q4_significance(q1_values, q4_values):
     """
-    Compute p-value for Q1 vs Q4 difference using paired t-test.
+    Compute statistical significance of Q1 vs Q4 performance difference.
 
-    Returns: (t_statistic, p_value, is_significant)
+    Uses paired t-test because:
+    - Same player in Q1 and Q4 of the same game = paired data
+    - Pairing controls for player-to-player variation
+    - More powerful than unpaired test when pairing is valid
+
+    Null hypothesis: mean(Q1 - Q4) = 0 (no difference between quarters)
+    Alternative hypothesis: mean(Q1 - Q4) ≠ 0 (some difference exists)
+
+    Args:
+        q1_values: Array of Q1 values (one per game)
+        q4_values: Array of Q4 values (one per game, same games as Q1)
+
+    Returns:
+        Tuple of (t_statistic, p_value, is_significant)
+        - t_statistic: Strength and direction of difference
+        - p_value: Probability of seeing this difference by chance
+        - is_significant: True if p < 0.05 (conventional threshold)
     """
     q1_arr = np.array(q1_values)
     q4_arr = np.array(q4_values)
 
-    # Remove pairs with NaN
+    # Remove game pairs where either quarter has NaN
+    # Must keep pairs together for valid paired test
     valid_mask = ~(np.isnan(q1_arr) | np.isnan(q4_arr))
     q1_valid = q1_arr[valid_mask]
     q4_valid = q4_arr[valid_mask]
 
+    # Need at least 3 pairs for meaningful test
     if len(q1_valid) < 3:
         return np.nan, np.nan, False
 
+    # Paired t-test (ttest_rel = related samples)
     t_stat, p_value = stats.ttest_rel(q1_valid, q4_valid)
-    is_significant = p_value < 0.05
+    is_significant = p_value < 0.05  # Conventional significance level
+
     return t_stat, p_value, is_significant
 
 
 def format_with_ci(mean_val, ci_low, ci_high, decimals=2):
-    """Format a value with its confidence interval."""
+    """
+    Format a value with its confidence interval for display.
+
+    Example output: "12.34 [10.12, 14.56]"
+
+    Args:
+        mean_val: Central estimate
+        ci_low: Lower bound of CI
+        ci_high: Upper bound of CI
+        decimals: Number of decimal places to show
+
+    Returns:
+        Formatted string, or "N/A" if mean_val is NaN
+    """
     if np.isnan(mean_val):
         return "N/A"
     return f"{mean_val:.{decimals}f} [{ci_low:.{decimals}f}, {ci_high:.{decimals}f}]"
 
 
 def get_sample_size_warning(n, threshold=20):
-    """Return warning text if sample size is below threshold."""
+    """
+    Generate warning text if sample size is below threshold.
+
+    Small samples lead to:
+    - Wide confidence intervals
+    - Unreliable point estimates
+    - High sensitivity to outliers
+
+    Args:
+        n: Sample size
+        threshold: Minimum acceptable sample size (default 20)
+
+    Returns:
+        Warning string if n < threshold, else None
+    """
     if n < threshold:
         return f"Low sample (n={n})"
     return None
@@ -126,31 +274,47 @@ def get_sample_size_warning(n, threshold=20):
 
 def compute_pca_weights(ratio_data):
     """
-    Derive optimal SLIS weights from PCA on impact stat ratios.
+    Derive optimal stat weights using Principal Component Analysis (PCA).
 
-    Uses first principal component loadings as weights.
-    This finds the linear combination that explains maximum variance.
+    PCA finds the linear combination of stats that explains maximum variance.
+    The first principal component loadings become weights for the SLIS metric.
+
+    Why PCA for weights:
+    - Data-driven: Lets the data determine which stats matter most
+    - Captures correlations: Stats that move together get similar weights
+    - Objective: Removes subjective bias in weight selection
+
+    Technical Details:
+    - Input: Ratio columns (Q4/Q1-3 ratios for each stat)
+    - Process: PCA extracts first principal component
+    - Output: Loading vector becomes stat weights
+    - Post-processing: Flip TOV weight to be negative (turnovers are bad)
 
     Args:
         ratio_data: DataFrame with columns r_pts, r_trb, r_ast, r_stl, r_blk, r_tov
+                   Each row is a player-game, values are Q4/Q1-3 ratios
 
     Returns:
-        dict of stat: weight, or None if insufficient data
+        dict mapping stat name to weight (e.g., {'pts': 0.35, 'trb': 0.20, ...})
+        Returns None if insufficient data (< 50 samples)
     """
-    from sklearn.decomposition import PCA
+    from sklearn.decomposition import PCA  # Import here to avoid startup cost
 
     impact_cols = ['r_pts', 'r_trb', 'r_ast', 'r_stl', 'r_blk', 'r_tov']
 
-    # Check all columns exist
+    # Check all required columns exist
     missing = [c for c in impact_cols if c not in ratio_data.columns]
     if missing:
         return None
 
+    # Remove rows with any NaN in impact columns
     valid_data = ratio_data[impact_cols].dropna()
 
+    # Need sufficient data for reliable PCA
     if len(valid_data) < 50:
-        return None  # Use default weights if insufficient data
+        return None  # Caller should use default weights
 
+    # Fit PCA with 1 component (we only need the first PC)
     pca = PCA(n_components=1)
     pca.fit(valid_data)
 
@@ -158,8 +322,8 @@ def compute_pca_weights(ratio_data):
     stat_names = ['pts', 'trb', 'ast', 'stl', 'blk', 'tov']
     weights = dict(zip(stat_names, pca.components_[0]))
 
-    # Normalize so weights sum to reasonable magnitude
-    # Also flip TOV sign if needed (should be negative)
+    # Ensure TOV weight is negative (turnovers hurt performance)
+    # PCA may assign positive if TOV ratios anti-correlate with others
     if weights['tov'] > 0:
         weights['tov'] = -abs(weights['tov'])
 
@@ -167,19 +331,29 @@ def compute_pca_weights(ratio_data):
 
 
 def get_chart_layout():
-    """Return consistent chart layout settings with grey background."""
+    """
+    Return consistent Plotly chart layout settings for dark theme.
+
+    Provides a unified visual style across all charts in the dashboard:
+    - Dark grey background (#2d3748) for modern look
+    - White text and gridlines for contrast
+    - Semi-transparent legend background
+
+    Returns:
+        Dictionary of Plotly layout options to pass to fig.update_layout()
+    """
     return dict(
-        template='plotly_dark',
-        paper_bgcolor='#2d3748',
-        plot_bgcolor='#2d3748',
-        font=dict(color='#ffffff'),
-        title_font=dict(color='#ffffff'),
+        template='plotly_dark',           # Base dark theme
+        paper_bgcolor='#2d3748',          # Chart background color
+        plot_bgcolor='#2d3748',           # Plot area background
+        font=dict(color='#ffffff'),       # General text color
+        title_font=dict(color='#ffffff'), # Title text color
         legend=dict(
-            bgcolor='rgba(45, 55, 72, 0.8)',
+            bgcolor='rgba(45, 55, 72, 0.8)',  # Semi-transparent legend
             font=dict(color='#ffffff')
         ),
         xaxis=dict(
-            gridcolor='rgba(255,255,255,0.1)',
+            gridcolor='rgba(255,255,255,0.1)',  # Subtle gridlines
             tickfont=dict(color='#ffffff')
         ),
         yaxis=dict(
@@ -189,40 +363,77 @@ def get_chart_layout():
     )
 
 
-# Page config
+# =============================================================================
+# STREAMLIT PAGE CONFIGURATION
+# =============================================================================
+# Must be called before any other Streamlit commands
+# Configures the browser tab title, favicon, and layout behavior
 st.set_page_config(
-    page_title="SDIS - Szklanny Decision Intelligence System",
-    page_icon="basketball",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="SDIS - Szklanny Decision Intelligence System",  # Browser tab title
+    page_icon="basketball",    # Favicon emoji (🏀)
+    layout="wide",             # Use full browser width
+    initial_sidebar_state="expanded"  # Start with sidebar open
 )
 
-# Load external CSS
+# =============================================================================
+# CSS STYLING
+# =============================================================================
 def load_css():
-    """Load external CSS file for styling."""
+    """
+    Load external CSS file for custom styling.
+
+    Streamlit has limited built-in styling options. External CSS allows:
+    - Custom fonts and colors
+    - Styled metric cards
+    - Better table formatting
+    - Responsive design tweaks
+    """
     css_path = os.path.join(os.path.dirname(__file__), "sdis_styles.css")
     try:
         with open(css_path, "r") as f:
+            # Inject CSS into page using markdown with unsafe_allow_html
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     except FileNotFoundError:
-        pass  # Graceful fallback if CSS file missing
+        pass  # Graceful fallback if CSS file missing - app still works
 
-load_css()
+load_css()  # Apply styles at startup
 
 # =============================================================================
-# DATA LOADING
+# DATA LOADING FUNCTIONS
 # =============================================================================
+# This section contains functions for loading NBA quarter-level data from
+# various sources: default Excel files, user uploads, and combined parquet files.
+# All functions standardize column names and calculate derived features like
+# back-to-back status and days rest.
 
-@st.cache_data
+@st.cache_data  # Streamlit caching: only reload when file changes
 def load_data():
-    """Load and process all data"""
-    file_path = "Sixers Fatigue Data.xlsx"
+    """
+    Load and process NBA data from the default Excel file.
+
+    This function loads the original team-specific Excel file format
+    used during development. It handles multiple sheets per team and
+    merges quarter data with advanced stats (age, MPG).
+
+    Data Processing Steps:
+    1. Load each team's quarter data sheets
+    2. Normalize column names (lowercase, strip whitespace)
+    3. Filter to valid quarters (Q1-Q4 only)
+    4. Calculate FG% from FGM/FGA
+    5. Calculate back-to-back status and days rest
+    6. Merge advanced stats (age, MPG) from separate sheets
+
+    Returns:
+        Dict mapping team name to processed DataFrame
+        Example: {'Sixers 2024-25': DataFrame, 'Pacers (Control)': DataFrame}
+    """
+    file_path = "Sixers Fatigue Data.xlsx"  # Default data file
 
     try:
         xl = pd.ExcelFile(file_path)
     except Exception as e:
         st.error(f"Could not open Excel file: {e}")
-        return {}
+        return {}  # Return empty dict so app doesn't crash
 
     q_sheets = {
         'Pacers (Control)': ["Control - '24 Pacers Q Data", "Control - '24 Pacers Q Data Pof"],
