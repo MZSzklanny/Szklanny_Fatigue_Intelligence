@@ -4164,8 +4164,16 @@ def predict_player_next_game(model, scalers, player_history, target_cols):
     target_scaler = scalers['target_scaler']
     seq_features = scalers['seq_features']
 
-    # Get last 10 games (or pad if less)
-    recent = player_history.tail(10).copy()
+    # Filter out injury/DNP games (< 12 minutes) before selecting recent games
+    # These don't represent true performance and skew predictions low
+    MIN_MINUTES_THRESHOLD = 12
+    if 'total_minutes' in player_history.columns:
+        valid_games = player_history[player_history['total_minutes'] >= MIN_MINUTES_THRESHOLD]
+    else:
+        valid_games = player_history
+
+    # Get last 10 VALID games (or pad if less)
+    recent = valid_games.tail(10).copy()
 
     # Ensure all required sequence features exist (add defaults for missing)
     for feat in seq_features:
